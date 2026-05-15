@@ -56,7 +56,13 @@ export function renderResults(el: HTMLElement) {
 }
 
 function reapplyGroupSelection() {
-  // Implemented in Task 8
+  document.querySelectorAll('#group-list li[data-id]').forEach(li => {
+    (li as HTMLElement).style.removeProperty('background');
+  });
+  if (selectedGroupId) {
+    const li = document.querySelector(`#group-list li[data-id="${selectedGroupId}"]`) as HTMLElement | null;
+    if (li) li.style.background = '#1e2a3a';
+  }
 }
 
 function wireControlsBar() {
@@ -161,32 +167,62 @@ function renderGroupList() {
 
   ul.innerHTML = groups.map(g => {
     const wastedMb = (g.wasted_bytes / 1_048_576).toFixed(1);
-    const badge = g.duplicate_type === 'exact' ? '=' : g.duplicate_type === 'perceptual' ? '~' : 'F';
-    const badgeColor = g.duplicate_type === 'exact' ? '#3b82f6' : g.duplicate_type === 'perceptual' ? '#a855f7' : '#f59e0b';
+
+    // Extended badge: ≈ = perceptual-identical (dist 0), ~ = perceptual-similar, = exact, F filename
+    let badge: string;
+    let badgeColor: string;
+    if (g.duplicate_type === 'exact') {
+      badge = '='; badgeColor = '#3b82f6';
+    } else if (g.duplicate_type === 'perceptual') {
+      if (g.max_distance === 0) {
+        badge = '≈'; badgeColor = '#22c55e';
+      } else {
+        badge = '~'; badgeColor = '#a855f7';
+      }
+    } else {
+      badge = 'F'; badgeColor = '#f59e0b';
+    }
+
+    const survivors = g.files.filter(f => !marked.has(f.path)).length;
+    const markedCount = g.files.length - survivors;
+    const noSurvivors = survivors === 0;
+    const borderStyle = noSurvivors ? 'border-left:3px solid #ef4444' : 'border-left:3px solid transparent';
+    const distLabel = g.duplicate_type === 'perceptual' && g.max_distance !== undefined
+      ? `<span style="font-size:10px;color:#555;margin-left:4px">d=${g.max_distance}</span>`
+      : '';
+
+    const survivorLine = markedCount > 0
+      ? `<div style="font-size:10px;color:${noSurvivors ? '#ef4444' : '#888'};margin-top:2px">
+           ${markedCount} marked → ${survivors} survive${noSurvivors ? ' ⚠' : ''}
+         </div>`
+      : '';
+
     return `
-      <li data-id="${g.id}" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #1e1e1e;display:flex;flex-direction:column;gap:3px">
+      <li data-id="${g.id}" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #1e1e1e;display:flex;flex-direction:column;gap:2px;${borderStyle}">
         <div style="display:flex;align-items:center;gap:6px">
           <span style="background:${badgeColor};color:#fff;font-size:10px;border-radius:3px;padding:1px 5px">${badge}</span>
+          ${distLabel}
           <span style="font-size:13px;font-weight:500">${g.files.length} files</span>
           <span style="font-size:11px;color:#666;margin-left:auto">${wastedMb} MB</span>
         </div>
-        <div class="mono" style="color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        <div style="font-size:11px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
           ${shortPath(g.files[0]?.path ?? '')}
         </div>
+        ${survivorLine}
       </li>
     `;
   }).join('');
 
   ul.querySelectorAll('li[data-id]').forEach(li => {
     li.addEventListener('click', () => {
-      const htmlLi = li as HTMLElement;
-      selectedGroupId = htmlLi.dataset.id!;
-      ul.querySelectorAll('li').forEach(l => (l as HTMLElement).style.removeProperty('background'));
-      htmlLi.style.background = '#1e2a3a';
+      selectedGroupId = (li as HTMLElement).dataset.id!;
+      reapplyGroupSelection();
       const group = groups.find(g => g.id === selectedGroupId);
       if (group) renderGroupDetail(group);
     });
   });
+
+  reapplyGroupSelection();
 }
 
 function renderGroupDetail(group: DuplicateGroup) {
@@ -205,11 +241,13 @@ function renderGroupDetail(group: DuplicateGroup) {
   el.querySelector('[data-action=keep-all]')!.addEventListener('click', () => {
     group.files.forEach(f => marked.delete(f.path));
     renderFileGrid(group);
+    renderGroupList();
     updateBottomBar();
   });
   el.querySelector('[data-action=delete-all]')!.addEventListener('click', () => {
     group.files.forEach(f => marked.add(f.path));
     renderFileGrid(group);
+    renderGroupList();
     updateBottomBar();
   });
 
@@ -247,12 +285,14 @@ function renderFileGrid(group: DuplicateGroup) {
       e.stopPropagation();
       marked.delete(path);
       renderFileGrid(group);
+      renderGroupList();
       updateBottomBar();
     });
     row.querySelector('[data-action=delete]')!.addEventListener('click', (e) => {
       e.stopPropagation();
       marked.add(path);
       renderFileGrid(group);
+      renderGroupList();
       updateBottomBar();
     });
   });
@@ -263,6 +303,7 @@ async function autoMark(group: DuplicateGroup) {
     const toMark = await api.autoMarkGroup(group.id);
     toMark.forEach(p => marked.add(p));
     renderFileGrid(group);
+    renderGroupList();
     updateBottomBar();
   } catch (e) {
     showToast(String(e));
