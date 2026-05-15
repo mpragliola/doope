@@ -227,73 +227,115 @@ function renderGroupList() {
 
 function renderGroupDetail(group: DuplicateGroup) {
   const el = document.getElementById('group-detail')!;
+
+  let headerLabel = '';
+  if (group.duplicate_type === 'perceptual') {
+    headerLabel = group.max_distance === 0
+      ? 'Perceptual identical (distance: 0)'
+      : `Perceptual similar (distance: ${group.max_distance ?? '?'})`;
+  } else if (group.duplicate_type === 'exact') {
+    headerLabel = 'Exact duplicates';
+  } else {
+    headerLabel = 'Filename match';
+  }
+
   el.innerHTML = `
-    <div style="padding:10px 14px;border-bottom:1px solid #1e1e1e;display:flex;gap:8px;align-items:center">
-      <span style="font-size:13px;font-weight:500;flex:1">Group: ${group.files.length} files</span>
-      <button class="ghost" data-action="auto-mark" style="font-size:12px;padding:5px 10px">Auto-mark by priority</button>
+    <div style="padding:10px 14px;border-bottom:1px solid #1e1e1e;display:flex;gap:8px;align-items:center;flex-shrink:0">
+      <div style="flex:1;overflow:hidden">
+        <span style="font-size:13px;font-weight:500">${group.files.length} files</span>
+        <span style="font-size:11px;color:#666;margin-left:8px">${headerLabel}</span>
+      </div>
+      <button class="ghost" data-action="auto-mark" style="font-size:12px;padding:5px 10px">Auto-mark</button>
       <button class="ghost" data-action="keep-all" style="font-size:12px;padding:5px 10px">Keep all</button>
       <button class="ghost" data-action="delete-all" style="font-size:12px;padding:5px 10px;color:#fca5a5">Mark all delete</button>
     </div>
-    <div id="file-grid" class="scroll-list" style="padding:12px;display:flex;flex-direction:column;gap:8px"></div>
+    <div id="file-grid" style="flex:1;display:flex;flex-direction:row;overflow-x:auto;gap:3px;padding:4px;background:#0d0d0d;min-height:0"></div>
   `;
 
   el.querySelector('[data-action=auto-mark]')!.addEventListener('click', () => autoMark(group));
   el.querySelector('[data-action=keep-all]')!.addEventListener('click', () => {
     group.files.forEach(f => marked.delete(f.path));
-    renderFileGrid(group);
+    renderComparisonPanel(group);
     renderGroupList();
     updateBottomBar();
   });
   el.querySelector('[data-action=delete-all]')!.addEventListener('click', () => {
     group.files.forEach(f => marked.add(f.path));
-    renderFileGrid(group);
+    renderComparisonPanel(group);
     renderGroupList();
     updateBottomBar();
   });
 
-  renderFileGrid(group);
+  renderComparisonPanel(group);
 }
 
-function renderFileGrid(group: DuplicateGroup) {
+function renderComparisonPanel(group: DuplicateGroup) {
   const grid = document.getElementById('file-grid')!;
+
   grid.innerHTML = group.files.map(f => {
     const isMarked = marked.has(f.path);
     const isImage = f.media_type === 'image';
     const sizeMb = (f.size / 1_048_576).toFixed(2);
-    const thumb = isImage
-      ? `<img src="${convertFileSrc(f.path)}" style="width:80px;height:60px;object-fit:cover;border-radius:4px;flex-shrink:0" onerror="this.style.display='none'">`
-      : `<div style="width:80px;height:60px;background:#222;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#555;flex-shrink:0">VIDEO</div>`;
+    const borderColor = isMarked ? '#7f1d1d' : '#1a3a28';
+    const stripBg = isMarked ? '#2d1515' : '#0f1f18';
+
+    const imageArea = isImage
+      ? `<div style="flex:1;position:relative;min-height:0;overflow:hidden;background:#080808">
+           <img
+             src="${convertFileSrc(f.path)}"
+             data-action="lightbox"
+             style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;cursor:zoom-in"
+             onerror="this.style.opacity='0.2'"
+           >
+         </div>`
+      : `<div style="flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:#0a0a0a;color:#444;font-size:12px">VIDEO</div>`;
+
     return `
-      <div data-path="${escapeAttr(f.path)}" style="display:flex;align-items:center;gap:12px;padding:10px;background:${isMarked ? '#2d1515' : '#181818'};border:1px solid ${isMarked ? '#7f1d1d' : '#252525'};border-radius:6px">
-        ${thumb}
-        <div style="flex:1;overflow:hidden;min-width:0">
-          <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${filename(f.path)}</div>
-          <div style="font-size:11px;color:#666;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttr(f.path)}">${f.path}</div>
-          <div style="font-size:11px;color:#888;margin-top:2px">${sizeMb} MB</div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
-          <button class="${isMarked ? 'ghost' : 'primary'}" data-action="keep" style="font-size:11px;padding:4px 10px">Keep</button>
-          <button class="${isMarked ? 'danger' : 'ghost'}" data-action="delete" style="font-size:11px;padding:4px 10px">Delete</button>
+      <div data-path="${escapeAttr(f.path)}"
+           style="flex:1;min-width:180px;display:flex;flex-direction:column;border:2px solid ${borderColor};border-radius:6px;overflow:hidden">
+        ${imageArea}
+        <div style="height:44px;min-height:44px;display:flex;align-items:center;gap:6px;padding:0 8px;background:${stripBg};flex-shrink:0">
+          <div style="flex:1;overflow:hidden;min-width:0">
+            <div style="font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                 title="${escapeAttr(f.path)}">${filename(f.path)}</div>
+            <div style="font-size:10px;color:#888">${sizeMb} MB</div>
+          </div>
+          <button class="${isMarked ? 'ghost' : 'primary'}" data-action="keep"
+                  style="font-size:10px;padding:3px 8px;flex-shrink:0">Keep</button>
+          <button class="${isMarked ? 'danger' : 'ghost'}" data-action="delete"
+                  style="font-size:10px;padding:3px 8px;flex-shrink:0">Delete</button>
         </div>
       </div>
     `;
   }).join('');
 
-  grid.querySelectorAll('[data-path]').forEach(row => {
-    const path = (row as HTMLElement).dataset.path!;
-    row.querySelector('[data-action=keep]')!.addEventListener('click', (e) => {
+  grid.querySelectorAll('[data-path]').forEach(cell => {
+    const path = (cell as HTMLElement).dataset.path!;
+    const file = group.files.find(f => f.path === path)!;
+
+    cell.querySelector('[data-action=lightbox]')?.addEventListener('click', () => {
+      openLightbox(file, group);
+    });
+
+    cell.querySelector('[data-action=keep]')!.addEventListener('click', (e) => {
       e.stopPropagation();
       marked.delete(path);
-      renderFileGrid(group);
+      renderComparisonPanel(group);
       renderGroupList();
       updateBottomBar();
     });
-    row.querySelector('[data-action=delete]')!.addEventListener('click', (e) => {
+
+    cell.querySelector('[data-action=delete]')!.addEventListener('click', (e) => {
       e.stopPropagation();
-      marked.add(path);
-      renderFileGrid(group);
-      renderGroupList();
-      updateBottomBar();
+      const survivors = group.files.filter(f => f.path !== path && !marked.has(f.path)).length;
+      if (survivors === 0) {
+        showLastCopyWarning(cell as HTMLElement, path, group);
+      } else {
+        marked.add(path);
+        renderComparisonPanel(group);
+        renderGroupList();
+        updateBottomBar();
+      }
     });
   });
 }
@@ -302,13 +344,16 @@ async function autoMark(group: DuplicateGroup) {
   try {
     const toMark = await api.autoMarkGroup(group.id);
     toMark.forEach(p => marked.add(p));
-    renderFileGrid(group);
+    renderComparisonPanel(group);
     renderGroupList();
     updateBottomBar();
   } catch (e) {
     showToast(String(e));
   }
 }
+
+function openLightbox(_f: FileInfo, _group: DuplicateGroup) { /* implemented in Task 10 */ }
+function showLastCopyWarning(_cell: HTMLElement, _path: string, _group: DuplicateGroup) { /* implemented in Task 11 */ }
 
 function updateBottomBar() {
   const deleteBtn = document.getElementById('btn-delete') as HTMLButtonElement;
