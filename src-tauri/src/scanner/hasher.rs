@@ -2,18 +2,21 @@ use anyhow::Result;
 use image::{DynamicImage, imageops};
 use std::path::Path;
 
-/// BLAKE3 hash of the full file, returned as 64-char hex string.
+/// BLAKE3 hash via 1 MB streaming reads — avoids loading the entire file into RAM.
 pub fn blake3_hash(path: &Path) -> Result<String> {
-    let data = std::fs::read(path)?;
-    let hash = blake3::hash(&data);
-    Ok(hash.to_hex().to_string())
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::with_capacity(1 << 20, file);
+    let mut hasher = blake3::Hasher::new();
+    std::io::copy(&mut reader, &mut hasher)?;
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
-/// dHash of an image: resize to 9x8 grayscale, compare adjacent pixels.
+/// dHash of an image: resize to 9×8 grayscale, compare adjacent pixels.
 /// Returns a 16-char hex string representing a u64.
+/// Triangle filter is ~3× faster than Lanczos3; quality is indistinguishable at 9×8.
 pub fn dhash_image(img: &DynamicImage) -> String {
     let small = img
-        .resize_exact(9, 8, imageops::FilterType::Lanczos3)
+        .resize_exact(9, 8, imageops::FilterType::Triangle)
         .to_luma8();
     let mut hash: u64 = 0;
     for y in 0..8u32 {
@@ -92,6 +95,17 @@ mod tests {
         let h2 = blake3_hash(&file).unwrap();
         assert_eq!(h1, h2);
         assert_eq!(h1.len(), 64);
+    }
+
+    #[test]
+    fn blake3_streaming_matches_eager() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("big.bin");
+        let data: Vec<u8> = (0u8..=255).cycle().take(4 * 1024 * 1024).collect();
+        std::fs::write(&file, &data).unwrap();
+        let streamed = blake3_hash(&file).unwrap();
+        let expected = blake3::hash(&data).to_hex().to_string();
+        assert_eq!(streamed, expected);
     }
 
     #[test]
