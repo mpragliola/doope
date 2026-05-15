@@ -205,8 +205,8 @@ function renderGroupList() {
           <span style="font-size:13px;font-weight:500">${g.files.length} files</span>
           <span style="font-size:11px;color:#666;margin-left:auto">${wastedMb} MB</span>
         </div>
-        <div style="font-size:11px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-          ${escapeAttr(shortPath(g.files[0]?.path ?? ''))}
+        <div style="font-size:10px;color:#555;display:flex;flex-direction:column;gap:1px;margin-top:2px">
+          ${g.files.map(f => `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttr(f.path)}">${escapeAttr(shortPath(f.path))}</span>`).join('')}
         </div>
         ${survivorLine}
       </li>
@@ -294,10 +294,12 @@ function renderComparisonPanel(group: DuplicateGroup) {
       <div data-path="${escapeAttr(f.path)}"
            style="flex:1;min-width:180px;display:flex;flex-direction:column;border:2px solid ${borderColor};border-radius:6px;overflow:hidden">
         ${imageArea}
-        <div style="height:44px;min-height:44px;display:flex;align-items:center;gap:6px;padding:0 8px;background:${stripBg};flex-shrink:0">
+        <div style="min-height:56px;display:flex;align-items:center;gap:6px;padding:4px 8px;background:${stripBg};flex-shrink:0">
           <div style="flex:1;overflow:hidden;min-width:0">
             <div style="font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                  title="${escapeAttr(f.path)}">${filename(f.path)}</div>
+            <div style="font-size:10px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                 title="${escapeAttr(f.path)}">${escapeAttr(f.path)}</div>
             <div style="font-size:10px;color:#888">${sizeMb} MB</div>
           </div>
           <button class="${isMarked ? 'ghost' : 'primary'}" data-action="keep"
@@ -417,7 +419,7 @@ function showLastCopyWarning(cell: HTMLElement, path: string, group: DuplicateGr
   const warning = document.createElement('div');
   warning.className = 'last-copy-warning';
   warning.style.cssText = [
-    'position:absolute;bottom:44px;left:0;right:0',
+    'position:absolute;bottom:56px;left:0;right:0',
     'background:#7f1d1d;color:#fca5a5;font-size:11px',
     'padding:6px 10px;display:flex;align-items:center;gap:8px;z-index:10',
   ].join(';');
