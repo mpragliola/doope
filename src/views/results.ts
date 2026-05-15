@@ -363,6 +363,18 @@ function openLightbox(f: FileInfo, group: DuplicateGroup) {
     'display:flex;flex-direction:column;align-items:center;justify-content:center',
   ].join(';');
 
+  // Declare onKey before closeLightbox so closeLightbox can reference it
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') closeLightbox();
+    if (e.key === 'ArrowLeft' && currentIdx > 0) { currentIdx--; renderLightboxContent(); }
+    if (e.key === 'ArrowRight' && currentIdx < imageFiles.length - 1) { currentIdx++; renderLightboxContent(); }
+  };
+
+  const closeLightbox = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+
   function renderLightboxContent() {
     const fi = imageFiles[currentIdx];
     overlay.innerHTML = `
@@ -380,7 +392,7 @@ function openLightbox(f: FileInfo, group: DuplicateGroup) {
               style="position:absolute;right:12px;top:50%;transform:translateY(-50%);padding:10px 14px;font-size:18px${currentIdx === imageFiles.length - 1 ? ';opacity:0.2;cursor:default' : ''}">›</button>
     `;
 
-    overlay.querySelector('#lb-close')!.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('#lb-close')!.addEventListener('click', closeLightbox);
     overlay.querySelector('#lb-prev')!.addEventListener('click', () => {
       if (currentIdx > 0) { currentIdx--; renderLightboxContent(); }
     });
@@ -393,14 +405,9 @@ function openLightbox(f: FileInfo, group: DuplicateGroup) {
   document.body.appendChild(overlay);
 
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.remove();
+    if (e.target === overlay) closeLightbox();
   });
 
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey); }
-    if (e.key === 'ArrowLeft' && currentIdx > 0) { currentIdx--; renderLightboxContent(); }
-    if (e.key === 'ArrowRight' && currentIdx < imageFiles.length - 1) { currentIdx++; renderLightboxContent(); }
-  };
   document.addEventListener('keydown', onKey);
 }
 function showLastCopyWarning(_cell: HTMLElement, _path: string, _group: DuplicateGroup) { /* implemented in Task 11 */ }
