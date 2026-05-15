@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use crate::models::MediaType;
-use walkdir::WalkDir;
+use jwalk::WalkDir;
 
 pub struct FoundFile {
     pub path: PathBuf,
@@ -12,20 +12,15 @@ pub struct FoundFile {
 pub fn walk_folders(folders: &[String]) -> Vec<FoundFile> {
     let mut files = Vec::new();
     for folder in folders {
-        for entry in WalkDir::new(folder)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        for entry in WalkDir::new(folder).follow_links(false) {
+            let entry = match entry { Ok(e) => e, Err(_) => continue };
+            if !entry.file_type().is_file() { continue; }
             let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
             let ext = path.extension()
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
             if let Some(media_type) = MediaType::from_extension(ext) {
-                let meta = match std::fs::metadata(path) {
+                let meta = match std::fs::metadata(&path) {
                     Ok(m) => m,
                     Err(_) => continue,
                 };
@@ -35,7 +30,7 @@ pub fn walk_folders(folders: &[String]) -> Vec<FoundFile> {
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
                 files.push(FoundFile {
-                    path: path.to_path_buf(),
+                    path,
                     media_type,
                     size: meta.len(),
                     mtime,
