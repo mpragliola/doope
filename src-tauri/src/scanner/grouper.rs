@@ -116,6 +116,7 @@ fn make_group(members: Vec<&FileRecord>, dup_type: DuplicateType) -> DuplicateGr
             .collect(),
         duplicate_type: dup_type,
         wasted_bytes,
+        max_distance: None,
     }
 }
 

@@ -91,6 +91,7 @@ pub struct DuplicateGroup {
     pub files: Vec<FileInfo>,
     pub duplicate_type: DuplicateType,
     pub wasted_bytes: u64,
+    pub max_distance: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,5 +126,17 @@ mod tests {
         let opts = ScanOptions::default();
         assert_eq!(opts.phash_threshold, 8);
         assert_eq!(opts.multi_frame_count, 8);
+    }
+
+    #[test]
+    fn duplicate_group_has_max_distance_field() {
+        let g = DuplicateGroup {
+            id: "x".to_string(),
+            files: vec![],
+            duplicate_type: DuplicateType::Perceptual,
+            wasted_bytes: 0,
+            max_distance: Some(3),
+        };
+        assert_eq!(g.max_distance, Some(3));
     }
 }
