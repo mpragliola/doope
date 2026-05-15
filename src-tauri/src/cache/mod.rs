@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 use std::path::Path;
 use crate::models::{FileRecord, MediaType};
 
@@ -125,6 +126,49 @@ impl Cache {
             result?;
         }
         Ok(())
+    }
+
+    /// Fetch all records whose paths are in `paths`, in a single query.
+    /// Size/mtime filtering is left to the caller so this remains a pure bulk read.
+    /// Splits into chunks of 500 to stay within SQLite's variable limit.
+    pub fn get_batch(&self, paths: &[&str]) -> Result<HashMap<String, FileRecord>> {
+        let mut result = HashMap::new();
+        if paths.is_empty() {
+            return Ok(result);
+        }
+        for chunk in paths.chunks(500) {
+            let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT path, size, mtime, exact_hash, phash, media_type \
+                 FROM files WHERE path IN ({})",
+                placeholders
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let rows = stmt.query_map(
+                rusqlite::params_from_iter(chunk.iter()),
+                |row| {
+                    let media_type_str: String = row.get(5)?;
+                    let media_type = if media_type_str == "image" {
+                        MediaType::Image
+                    } else {
+                        MediaType::Video
+                    };
+                    Ok(FileRecord {
+                        path: row.get(0)?,
+                        size: row.get::<_, i64>(1)? as u64,
+                        mtime: row.get::<_, i64>(2)? as u64,
+                        exact_hash: row.get(3)?,
+                        phash: row.get(4)?,
+                        media_type,
+                    })
+                },
+            )?;
+            for row in rows {
+                let record = row?;
+                result.insert(record.path.clone(), record);
+            }
+        }
+        Ok(result)
     }
 
     pub fn clear(&self) -> Result<()> {

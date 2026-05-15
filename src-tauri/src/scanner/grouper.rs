@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -43,24 +44,22 @@ pub fn find_duplicates(
 }
 
 fn compute_max_distance(cluster: &[&FileRecord]) -> u32 {
-    let mut max = 0u32;
-    for i in 0..cluster.len() {
-        for j in (i + 1)..cluster.len() {
+    let n = cluster.len();
+    (0..n)
+        .flat_map(|i| (i + 1..n).map(move |j| (i, j)))
+        .collect::<Vec<_>>()
+        .par_iter()
+        .filter_map(|&(i, j)| {
             let hi = cluster[i].phash.as_deref().unwrap();
             let hj = cluster[j].phash.as_deref().unwrap();
-            let d = if hi.contains(';') || hj.contains(';') {
+            if hi.contains(';') || hj.contains(';') {
                 hamming_distance_multi(hi, hj)
             } else {
                 hamming_distance(hi, hj)
-            };
-            if let Some(d) = d {
-                if d > max {
-                    max = d;
-                }
             }
-        }
-    }
-    max
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// BK-tree accelerated grouping for single-frame phashes (images and FirstFrame videos).
@@ -83,15 +82,20 @@ fn group_single_frame(records: &[&FileRecord], threshold: u32) -> Vec<DuplicateG
         tree.insert(*hash, i);
     }
 
+    // BkTree is Send + Sync (all-primitive storage), so find_within queries are safe to
+    // run in parallel. Each query is read-only — no tree mutation during this phase.
+    let neighbor_lists: Vec<Vec<usize>> = (0..n)
+        .into_par_iter()
+        .map(|i| tree.find_within(parsed[i].0, threshold))
+        .collect();
+
+    // Cluster assignment is order-dependent (greedy) — must stay sequential.
     let mut assigned = vec![false; n];
     let mut groups = Vec::new();
 
     for i in 0..n {
         if assigned[i] { continue; }
-        let (query_hash, _) = parsed[i];
-        let neighbors = tree.find_within(query_hash, threshold);
-
-        let unassigned: Vec<usize> = neighbors
+        let unassigned: Vec<usize> = neighbor_lists[i]
             .iter()
             .copied()
             .filter(|&j| !assigned[j])
@@ -173,12 +177,15 @@ fn group_by_phash(records: &[FileRecord], threshold: u32) -> Vec<DuplicateGroup>
         return Vec::new();
     }
 
-    let (single_frame, multi_frame): (Vec<_>, Vec<_>) = with_hash
-        .iter()
-        .partition(|r| !r.phash.as_deref().unwrap_or("").contains(';'));
-
-    let single_refs: Vec<&FileRecord> = single_frame.into_iter().copied().collect();
-    let multi_refs: Vec<&FileRecord> = multi_frame.into_iter().copied().collect();
+    let mut single_refs: Vec<&FileRecord> = Vec::new();
+    let mut multi_refs: Vec<&FileRecord> = Vec::new();
+    for r in &with_hash {
+        if r.phash.as_deref().unwrap_or("").contains(';') {
+            multi_refs.push(r);
+        } else {
+            single_refs.push(r);
+        }
+    }
 
     let mut groups = Vec::new();
     groups.extend(group_single_frame(&single_refs, threshold));

@@ -5,6 +5,7 @@ pub mod grouper;
 pub mod bktree;
 
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -20,40 +21,65 @@ pub struct ScanResult {
 }
 
 /// Phase 1: walk folders, hash files in parallel, populate cache.
-/// Cache reads happen inside par_iter; writes are batched into one transaction at the end.
+/// Cache reads are bulk-fetched once before par_iter (zero lock contention during hashing).
+/// Writes are batched into one transaction at the end.
 pub fn run_phase1(
     options: &ScanOptions,
     cache: Arc<Mutex<Cache>>,
     cancel: Arc<AtomicBool>,
     progress_cb: impl Fn(ProgressEvent) + Send + Sync,
 ) -> ScanResult {
-    let files = walk_folders(&options.folders);
+    progress_cb(ProgressEvent {
+        current: 0,
+        total: 0,
+        path: String::new(),
+        phase: Phase::Walking,
+        cached: None,
+    });
+
+    let files = walk_folders(&options.folders, &cancel);
     let total = files.len();
+
+    // Pre-compute path strings once; avoids repeated allocation inside par_iter.
+    let path_strs: Vec<String> = files.iter()
+        .map(|f| f.path.to_string_lossy().into_owned())
+        .collect();
+
+    // Single lock: bulk-fetch all potentially cached records in one SQLite query.
+    // The resulting HashMap is Send + Sync — no locking needed during the parallel phase.
+    let cache_snapshot: HashMap<String, FileRecord> = {
+        let c = cache.lock().unwrap();
+        let refs: Vec<&str> = path_strs.iter().map(String::as_str).collect();
+        c.get_batch(&refs).unwrap_or_default()
+    };
+
     let counter = Arc::new(AtomicUsize::new(0));
+    let cached_count = Arc::new(AtomicUsize::new(0));
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
 
     enum Outcome { Cached(FileRecord), New(FileRecord) }
 
     let outcomes: Vec<Option<Outcome>> = files
         .par_iter()
-        .map(|found| {
+        .zip(path_strs.par_iter())
+        .map(|(found, path_str)| {
             if cancel.load(Ordering::Relaxed) {
                 return None;
             }
-            let path_str = found.path.to_string_lossy().to_string();
 
-            // Cache reads only — no writes inside par_iter.
-            {
-                let c = cache.lock().unwrap();
-                if let Ok(Some(cached)) = c.get(&path_str, found.size, found.mtime) {
+            // O(1) HashMap lookup — no lock, no SQLite round-trip.
+            if let Some(cached) = cache_snapshot.get(path_str) {
+                if cached.size == found.size && cached.mtime == found.mtime {
                     let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                    let nc = cached_count.fetch_add(1, Ordering::Relaxed) + 1;
                     progress_cb(ProgressEvent {
                         current: n,
                         total,
-                        path: path_str,
+                        path: path_str.clone(),
                         phase: Phase::Hashing,
+                        cached: Some(nc),
                     });
-                    return Some(Outcome::Cached(cached));
+                    return Some(Outcome::Cached(cached.clone()));
                 }
             }
 
@@ -75,7 +101,7 @@ pub fn run_phase1(
                 }
                 MediaType::Video => {
                     if matches!(options.mode, ScanMode::Content | ScanMode::Both) {
-                        video_phash(&found.path, &options.video_strategy, options.multi_frame_count)
+                        video_phash(&found.path, &options.video_strategy, options.multi_frame_count, &cancel)
                     } else {
                         None
                     }
@@ -92,11 +118,13 @@ pub fn run_phase1(
             };
 
             let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            let nc = cached_count.load(Ordering::Relaxed);
             progress_cb(ProgressEvent {
                 current: n,
                 total,
-                path: path_str,
+                path: path_str.clone(),
                 phase: Phase::Hashing,
+                cached: if nc > 0 { Some(nc) } else { None },
             });
 
             Some(Outcome::New(record))
