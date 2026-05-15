@@ -41,6 +41,27 @@ pub fn find_duplicates(
     groups
 }
 
+fn compute_max_distance(cluster: &[&FileRecord]) -> u32 {
+    let mut max = 0u32;
+    for i in 0..cluster.len() {
+        for j in (i + 1)..cluster.len() {
+            let hi = cluster[i].phash.as_deref().unwrap();
+            let hj = cluster[j].phash.as_deref().unwrap();
+            let d = if hi.contains(';') || hj.contains(';') {
+                hamming_distance_multi(hi, hj)
+            } else {
+                hamming_distance(hi, hj)
+            };
+            if let Some(d) = d {
+                if d > max {
+                    max = d;
+                }
+            }
+        }
+    }
+    max
+}
+
 fn group_by_filename(records: &[FileRecord]) -> Vec<DuplicateGroup> {
     let mut map: HashMap<(String, u64), Vec<&FileRecord>> = HashMap::new();
     for r in records {
@@ -53,7 +74,7 @@ fn group_by_filename(records: &[FileRecord]) -> Vec<DuplicateGroup> {
     }
     map.into_values()
         .filter(|v| v.len() >= 2)
-        .map(|members| make_group(members, DuplicateType::Filename))
+        .map(|members| make_group(members, DuplicateType::Filename, None))
         .collect()
 }
 
@@ -66,7 +87,7 @@ fn group_by_exact(records: &[FileRecord]) -> Vec<DuplicateGroup> {
     }
     map.into_values()
         .filter(|v| v.len() >= 2)
-        .map(|members| make_group(members, DuplicateType::Exact))
+        .map(|members| make_group(members, DuplicateType::Exact, None))
         .collect()
 }
 
@@ -95,13 +116,14 @@ fn group_by_phash(records: &[FileRecord], threshold: u32) -> Vec<DuplicateGroup>
             }
         }
         if cluster.len() >= 2 {
-            groups.push(make_group(cluster, DuplicateType::Perceptual));
+            let max_dist = compute_max_distance(&cluster);
+            groups.push(make_group(cluster, DuplicateType::Perceptual, Some(max_dist)));
         }
     }
     groups
 }
 
-fn make_group(members: Vec<&FileRecord>, dup_type: DuplicateType) -> DuplicateGroup {
+fn make_group(members: Vec<&FileRecord>, dup_type: DuplicateType, max_distance: Option<u32>) -> DuplicateGroup {
     let max_size = members.iter().map(|r| r.size).max().unwrap_or(0);
     let wasted_bytes = members.iter().map(|r| r.size).sum::<u64>().saturating_sub(max_size);
     DuplicateGroup {
@@ -116,7 +138,7 @@ fn make_group(members: Vec<&FileRecord>, dup_type: DuplicateType) -> DuplicateGr
             .collect(),
         duplicate_type: dup_type,
         wasted_bytes,
-        max_distance: None,
+        max_distance,
     }
 }
 
@@ -179,5 +201,44 @@ mod tests {
         ];
         let groups = find_duplicates(&records, &ScanMode::Content, 8);
         assert_eq!(groups[0].wasted_bytes, 2000);
+    }
+
+    #[test]
+    fn perceptual_group_max_distance_computed() {
+        // h1=0, h2=1-bit-from-h1, h3=2-bits-from-h1, all within threshold=8
+        let h1 = "0000000000000000";
+        let h2 = "0000000000000001"; // distance 1 from h1
+        let h3 = "0000000000000011"; // distance 2 from h1, distance 1 from h2
+        let records = vec![
+            FileRecord {
+                path: "/a.jpg".to_string(), size: 100, mtime: 0,
+                exact_hash: None, phash: Some(h1.to_string()),
+                media_type: MediaType::Image,
+            },
+            FileRecord {
+                path: "/b.jpg".to_string(), size: 100, mtime: 0,
+                exact_hash: None, phash: Some(h2.to_string()),
+                media_type: MediaType::Image,
+            },
+            FileRecord {
+                path: "/c.jpg".to_string(), size: 100, mtime: 0,
+                exact_hash: None, phash: Some(h3.to_string()),
+                media_type: MediaType::Image,
+            },
+        ];
+        let groups = find_duplicates(&records, &ScanMode::Content, 8);
+        assert_eq!(groups.len(), 1);
+        // max pairwise distance: h1↔h3 = 2
+        assert_eq!(groups[0].max_distance, Some(2));
+    }
+
+    #[test]
+    fn exact_group_has_no_max_distance() {
+        let records = vec![
+            rec("/a/img1.jpg", 1000, "hash_abc", None),
+            rec("/b/img2.jpg", 1000, "hash_abc", None),
+        ];
+        let groups = find_duplicates(&records, &ScanMode::Content, 8);
+        assert_eq!(groups[0].max_distance, None);
     }
 }
