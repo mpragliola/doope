@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod models;
+pub mod scanner;
 
 pub fn run() {
     tauri::Builder::default()
