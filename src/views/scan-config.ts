@@ -38,6 +38,9 @@ export function renderScanConfig(el: HTMLElement) {
 
         <div id="content-options">
           <label>Video Strategy</label>
+          <div id="ffmpeg-warning" style="display:none;font-size:12px;color:#fbbf24;background:#1c1407;border:1px solid #78350f;border-radius:5px;padding:6px 10px;margin-bottom:6px">
+            ⚠ ffmpeg not found — perceptual video strategies unavailable
+          </div>
           <select id="sel-video">
             <option value="first_frame">First frame perceptual hash</option>
             <option value="exact_only">Exact hash only (fastest)</option>
@@ -63,6 +66,20 @@ export function renderScanConfig(el: HTMLElement) {
   `;
 
   wireEvents(el);
+  checkFfmpeg();
+}
+
+async function checkFfmpeg() {
+  const available = await api.checkFfmpeg();
+  if (!available) {
+    const warning = document.getElementById('ffmpeg-warning')!;
+    const sel = document.getElementById('sel-video') as HTMLSelectElement;
+    warning.style.display = 'block';
+    sel.querySelectorAll<HTMLOptionElement>('option').forEach(opt => {
+      if (opt.value !== 'exact_only') opt.disabled = true;
+    });
+    sel.value = 'exact_only';
+  }
 }
 
 function wireEvents(el: HTMLElement) {
