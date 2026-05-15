@@ -12,6 +12,12 @@ export const api = {
   getDuplicateGroups: () =>
     invoke<DuplicateGroup[]>('get_duplicate_groups'),
 
+  regroup: (threshold: number) =>
+    invoke<void>('regroup', { threshold }),
+
+  getFolderPriorities: () =>
+    invoke<string[]>('get_folder_priorities'),
+
   setFolderPriorities: (priorities: string[]) =>
     invoke<void>('set_folder_priorities', { priorities }),
 

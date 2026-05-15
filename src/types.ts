@@ -24,6 +24,7 @@ export interface DuplicateGroup {
   files: FileInfo[];
   duplicate_type: DuplicateType;
   wasted_bytes: number;
+  max_distance?: number;
 }
 
 export interface ProgressEvent {
