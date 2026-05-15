@@ -198,7 +198,7 @@ function renderGroupDetail(group: DuplicateGroup) {
       <button class="ghost" data-action="keep-all" style="font-size:12px;padding:5px 10px">Keep all</button>
       <button class="ghost" data-action="delete-all" style="font-size:12px;padding:5px 10px;color:#fca5a5">Mark all delete</button>
     </div>
-    <div id="file-grid" class="scroll-list" style="padding:16px"></div>
+    <div id="file-grid" class="scroll-list" style="padding:12px;display:flex;flex-direction:column;gap:8px"></div>
   `;
 
   el.querySelector('[data-action=auto-mark]')!.addEventListener('click', () => autoMark(group));
@@ -218,44 +218,24 @@ function renderGroupDetail(group: DuplicateGroup) {
 
 function renderFileGrid(group: DuplicateGroup) {
   const grid = document.getElementById('file-grid')!;
-  const colMin = group.files.length <= 2 ? '240px' : '180px';
-  grid.style.cssText = `padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(${colMin},1fr));gap:12px;align-content:start`;
-
   grid.innerHTML = group.files.map(f => {
     const isMarked = marked.has(f.path);
     const isImage = f.media_type === 'image';
     const sizeMb = (f.size / 1_048_576).toFixed(2);
-    const cardBorder = isMarked ? '#b91c1c' : '#2a2a2a';
-    const cardBg = isMarked ? '#2a1010' : '#181818';
-
-    const mediaBlock = isImage
-      ? `<div style="position:relative;width:100%;aspect-ratio:4/3;background:#111;overflow:hidden;border-radius:6px 6px 0 0">
-           <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#444;font-size:11px">No preview</div>
-           <img src="${convertFileSrc(f.path)}"
-                style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#111"
-                onerror="this.style.display='none'">
-         </div>`
-      : `<div style="width:100%;aspect-ratio:4/3;background:#1a1a1a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border-radius:6px 6px 0 0">
-           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="1.5"><path d="M15 10l4.553-2.069A1 1 0 0121 8.877v6.246a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg>
-           <span style="font-size:10px;color:#555">VIDEO</span>
-         </div>`;
-
+    const thumb = isImage
+      ? `<img src="${convertFileSrc(f.path)}" style="width:80px;height:60px;object-fit:cover;border-radius:4px;flex-shrink:0" onerror="this.style.display='none'">`
+      : `<div style="width:80px;height:60px;background:#222;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#555;flex-shrink:0">VIDEO</div>`;
     return `
-      <div data-path="${escapeAttr(f.path)}"
-           style="display:flex;flex-direction:column;border:2px solid ${cardBorder};border-radius:6px;overflow:hidden;background:${cardBg};transition:border-color 0.12s">
-        ${mediaBlock}
-        <div style="padding:8px 10px;flex:1;display:flex;flex-direction:column;gap:2px;border-top:1px solid #222">
-          <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-               title="${escapeAttr(f.path)}">${filename(f.path)}</div>
-          <div class="mono" style="color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-               title="${escapeAttr(f.path)}">${shortPath(f.path)}</div>
-          <div style="font-size:10px;color:#666;margin-top:2px">${sizeMb} MB</div>
+      <div data-path="${escapeAttr(f.path)}" style="display:flex;align-items:center;gap:12px;padding:10px;background:${isMarked ? '#2d1515' : '#181818'};border:1px solid ${isMarked ? '#7f1d1d' : '#252525'};border-radius:6px">
+        ${thumb}
+        <div style="flex:1;overflow:hidden;min-width:0">
+          <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${filename(f.path)}</div>
+          <div style="font-size:11px;color:#666;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttr(f.path)}">${f.path}</div>
+          <div style="font-size:11px;color:#888;margin-top:2px">${sizeMb} MB</div>
         </div>
-        <div style="display:flex;gap:6px;padding:8px 10px;border-top:1px solid #222">
-          <button class="${isMarked ? 'ghost' : 'primary'}" data-action="keep"
-                  style="flex:1;font-size:11px;padding:5px 0">Keep</button>
-          <button class="${isMarked ? 'danger' : 'ghost'}" data-action="delete"
-                  style="flex:1;font-size:11px;padding:5px 0">Delete</button>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+          <button class="${isMarked ? 'ghost' : 'primary'}" data-action="keep" style="font-size:11px;padding:4px 10px">Keep</button>
+          <button class="${isMarked ? 'danger' : 'ghost'}" data-action="delete" style="font-size:11px;padding:4px 10px">Delete</button>
         </div>
       </div>
     `;
