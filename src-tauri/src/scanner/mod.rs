@@ -2,6 +2,7 @@ pub mod walker;
 pub mod hasher;
 pub mod video;
 pub mod grouper;
+pub mod bktree;
 
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

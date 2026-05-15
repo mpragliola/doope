@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::models::{DuplicateGroup, DuplicateType, FileInfo, FileRecord, ScanMode};
+use crate::scanner::bktree::BkTree;
 use crate::scanner::hasher::{hamming_distance, hamming_distance_multi};
 
 pub fn find_duplicates(
@@ -62,6 +63,81 @@ fn compute_max_distance(cluster: &[&FileRecord]) -> u32 {
     max
 }
 
+/// BK-tree accelerated grouping for single-frame phashes (images and FirstFrame videos).
+fn group_single_frame(records: &[&FileRecord], threshold: u32) -> Vec<DuplicateGroup> {
+    let parsed: Vec<(u64, &FileRecord)> = records
+        .iter()
+        .filter_map(|r| {
+            u64::from_str_radix(r.phash.as_deref().unwrap_or(""), 16)
+                .ok()
+                .map(|h| (h, *r))
+        })
+        .collect();
+    let n = parsed.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    let mut tree = BkTree::new();
+    for (i, (hash, _)) in parsed.iter().enumerate() {
+        tree.insert(*hash, i);
+    }
+
+    let mut assigned = vec![false; n];
+    let mut groups = Vec::new();
+
+    for i in 0..n {
+        if assigned[i] { continue; }
+        let (query_hash, _) = parsed[i];
+        let neighbors = tree.find_within(query_hash, threshold);
+
+        let unassigned: Vec<usize> = neighbors
+            .iter()
+            .copied()
+            .filter(|&j| !assigned[j])
+            .collect();
+        let cluster: Vec<&FileRecord> = unassigned.iter().map(|&j| {
+            assigned[j] = true;
+            parsed[j].1
+        }).collect();
+
+        if cluster.len() >= 2 {
+            let max_dist = compute_max_distance(&cluster);
+            groups.push(make_group(cluster, DuplicateType::Perceptual, Some(max_dist)));
+        }
+    }
+    groups
+}
+
+/// O(n²) grouping for multi-frame phashes (MultiFrame video strategy only — small set).
+fn group_multi_frame(records: &[&FileRecord], threshold: u32) -> Vec<DuplicateGroup> {
+    let n = records.len();
+    let mut assigned = vec![false; n];
+    let mut groups = Vec::new();
+
+    for i in 0..n {
+        if assigned[i] { continue; }
+        let hi = records[i].phash.as_deref().unwrap();
+        let mut cluster: Vec<&FileRecord> = vec![records[i]];
+        assigned[i] = true;
+
+        for j in (i + 1)..n {
+            if assigned[j] { continue; }
+            let hj = records[j].phash.as_deref().unwrap();
+            if hamming_distance_multi(hi, hj).map_or(false, |d| d <= threshold) {
+                cluster.push(records[j]);
+                assigned[j] = true;
+            }
+        }
+
+        if cluster.len() >= 2 {
+            let max_dist = compute_max_distance(&cluster);
+            groups.push(make_group(cluster, DuplicateType::Perceptual, Some(max_dist)));
+        }
+    }
+    groups
+}
+
 fn group_by_filename(records: &[FileRecord]) -> Vec<DuplicateGroup> {
     let mut map: HashMap<(String, u64), Vec<&FileRecord>> = HashMap::new();
     for r in records {
@@ -93,33 +169,20 @@ fn group_by_exact(records: &[FileRecord]) -> Vec<DuplicateGroup> {
 
 fn group_by_phash(records: &[FileRecord], threshold: u32) -> Vec<DuplicateGroup> {
     let with_hash: Vec<&FileRecord> = records.iter().filter(|r| r.phash.is_some()).collect();
-    let n = with_hash.len();
-    let mut assigned = vec![false; n];
-    let mut groups: Vec<DuplicateGroup> = Vec::new();
-
-    for i in 0..n {
-        if assigned[i] { continue; }
-        let mut cluster: Vec<&FileRecord> = vec![with_hash[i]];
-        assigned[i] = true;
-        let hi = with_hash[i].phash.as_deref().unwrap();
-        for j in (i + 1)..n {
-            if assigned[j] { continue; }
-            let hj = with_hash[j].phash.as_deref().unwrap();
-            let dist = if hi.contains(';') || hj.contains(';') {
-                hamming_distance_multi(hi, hj)
-            } else {
-                hamming_distance(hi, hj)
-            };
-            if dist.map_or(false, |d| d <= threshold) {
-                cluster.push(with_hash[j]);
-                assigned[j] = true;
-            }
-        }
-        if cluster.len() >= 2 {
-            let max_dist = compute_max_distance(&cluster);
-            groups.push(make_group(cluster, DuplicateType::Perceptual, Some(max_dist)));
-        }
+    if with_hash.is_empty() {
+        return Vec::new();
     }
+
+    let (single_frame, multi_frame): (Vec<_>, Vec<_>) = with_hash
+        .iter()
+        .partition(|r| !r.phash.as_deref().unwrap_or("").contains(';'));
+
+    let single_refs: Vec<&FileRecord> = single_frame.into_iter().copied().collect();
+    let multi_refs: Vec<&FileRecord> = multi_frame.into_iter().copied().collect();
+
+    let mut groups = Vec::new();
+    groups.extend(group_single_frame(&single_refs, threshold));
+    groups.extend(group_multi_frame(&multi_refs, threshold));
     groups
 }
 
