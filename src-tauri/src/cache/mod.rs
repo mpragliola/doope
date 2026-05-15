@@ -84,6 +84,49 @@ impl Cache {
         Ok(())
     }
 
+    /// Write all records in a single BEGIN/COMMIT transaction.
+    /// ~100× faster than individual upserts for large batches.
+    pub fn upsert_batch(&self, records: &[FileRecord]) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.conn.execute_batch("BEGIN")?;
+        let result: Result<()> = (|| {
+            for record in records {
+                let media_type_str = match record.media_type {
+                    MediaType::Image => "image",
+                    MediaType::Video => "video",
+                };
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO files
+                     (path, size, mtime, exact_hash, phash, media_type, scanned_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        record.path,
+                        record.size as i64,
+                        record.mtime as i64,
+                        record.exact_hash,
+                        record.phash,
+                        media_type_str,
+                        now as i64,
+                    ],
+                )?;
+            }
+            Ok(())
+        })();
+        if result.is_ok() {
+            self.conn.execute_batch("COMMIT")?;
+        } else {
+            self.conn.execute_batch("ROLLBACK").ok();
+            result?;
+        }
+        Ok(())
+    }
+
     pub fn clear(&self) -> Result<()> {
         self.conn.execute("DELETE FROM files", [])?;
         Ok(())
@@ -133,6 +176,32 @@ mod tests {
         cache.upsert(&make_record("/img/photo.jpg")).unwrap();
         let miss = cache.get("/img/photo.jpg", 1024, 9999999999).unwrap();
         assert!(miss.is_none());
+    }
+
+    #[test]
+    fn upsert_batch_then_hit() {
+        let dir = tempdir().unwrap();
+        let cache = Cache::open(&dir.path().join("test.db")).unwrap();
+        let records: Vec<FileRecord> = (0u64..5).map(|i| FileRecord {
+            path: format!("/img/{}.jpg", i),
+            size: 1000 + i,
+            mtime: 1700000000,
+            exact_hash: Some(format!("hash{}", i)),
+            phash: None,
+            media_type: MediaType::Image,
+        }).collect();
+        cache.upsert_batch(&records).unwrap();
+        for r in &records {
+            let hit = cache.get(&r.path, r.size, r.mtime).unwrap();
+            assert!(hit.is_some(), "expected cache hit for {}", r.path);
+        }
+    }
+
+    #[test]
+    fn upsert_batch_empty_is_noop() {
+        let dir = tempdir().unwrap();
+        let cache = Cache::open(&dir.path().join("test.db")).unwrap();
+        cache.upsert_batch(&[]).unwrap();
     }
 
     #[test]

@@ -19,8 +19,7 @@ pub struct ScanResult {
 }
 
 /// Phase 1: walk folders, hash files in parallel, populate cache.
-/// `progress_cb` is called after each file.
-/// Set `cancel` to true to stop early.
+/// Cache reads happen inside par_iter; writes are batched into one transaction at the end.
 pub fn run_phase1(
     options: &ScanOptions,
     cache: Arc<Mutex<Cache>>,
@@ -32,7 +31,9 @@ pub fn run_phase1(
     let counter = Arc::new(AtomicUsize::new(0));
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
 
-    let records: Vec<Option<FileRecord>> = files
+    enum Outcome { Cached(FileRecord), New(FileRecord) }
+
+    let outcomes: Vec<Option<Outcome>> = files
         .par_iter()
         .map(|found| {
             if cancel.load(Ordering::Relaxed) {
@@ -40,7 +41,7 @@ pub fn run_phase1(
             }
             let path_str = found.path.to_string_lossy().to_string();
 
-            // Cache check
+            // Cache reads only — no writes inside par_iter.
             {
                 let c = cache.lock().unwrap();
                 if let Ok(Some(cached)) = c.get(&path_str, found.size, found.mtime) {
@@ -48,14 +49,13 @@ pub fn run_phase1(
                     progress_cb(ProgressEvent {
                         current: n,
                         total,
-                        path: path_str.clone(),
+                        path: path_str,
                         phase: Phase::Hashing,
                     });
-                    return Some(cached);
+                    return Some(Outcome::Cached(cached));
                 }
             }
 
-            // Compute hashes
             let exact_hash = match blake3_hash(&found.path) {
                 Ok(h) => Some(h),
                 Err(e) => {
@@ -90,14 +90,6 @@ pub fn run_phase1(
                 media_type: found.media_type.clone(),
             };
 
-            // Update cache
-            {
-                let c = cache.lock().unwrap();
-                if let Err(e) = c.upsert(&record) {
-                    errors.lock().unwrap().push(format!("cache write {}: {}", path_str, e));
-                }
-            }
-
             let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
             progress_cb(ProgressEvent {
                 current: n,
@@ -106,12 +98,33 @@ pub fn run_phase1(
                 phase: Phase::Hashing,
             });
 
-            Some(record)
+            Some(Outcome::New(record))
         })
         .collect();
 
+    let mut records: Vec<FileRecord> = Vec::with_capacity(outcomes.len());
+    let mut new_records: Vec<FileRecord> = Vec::new();
+
+    for outcome in outcomes.into_iter().flatten() {
+        match outcome {
+            Outcome::Cached(r) => records.push(r),
+            Outcome::New(r) => {
+                new_records.push(r.clone());
+                records.push(r);
+            }
+        }
+    }
+
+    // Batch-write all newly computed records in one transaction.
+    if !new_records.is_empty() {
+        let c = cache.lock().unwrap();
+        if let Err(e) = c.upsert_batch(&new_records) {
+            errors.lock().unwrap().push(format!("cache batch write: {}", e));
+        }
+    }
+
     ScanResult {
-        records: records.into_iter().flatten().collect(),
+        records,
         errors: Arc::try_unwrap(errors)
             .unwrap_or_else(|arc| Mutex::new(arc.lock().unwrap().clone()))
             .into_inner()
