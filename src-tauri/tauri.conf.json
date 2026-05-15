@@ -14,7 +14,8 @@
         "title": "Doope — Duplicate Finder",
         "width": 1100,
         "height": 720,
-        "resizable": true
+        "resizable": true,
+        "zoomHotkeysEnabled": true
       }
     ],
     "security": {
