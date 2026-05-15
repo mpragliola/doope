@@ -206,7 +206,7 @@ function renderGroupList() {
           <span style="font-size:11px;color:#666;margin-left:auto">${wastedMb} MB</span>
         </div>
         <div style="font-size:11px;color:#555;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-          ${shortPath(g.files[0]?.path ?? '')}
+          ${escapeAttr(shortPath(g.files[0]?.path ?? ''))}
         </div>
         ${survivorLine}
       </li>
@@ -383,7 +383,7 @@ function openLightbox(f: FileInfo, group: DuplicateGroup) {
         <button id="lb-close" class="ghost" style="padding:5px 12px;font-size:13px">✕ Close</button>
       </div>
       <div style="position:absolute;bottom:16px;font-size:12px;color:#888;max-width:80%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-           title="${escapeAttr(fi.path)}">${fi.path}</div>
+           title="${escapeAttr(fi.path)}">${escapeAttr(fi.path)}</div>
       <button id="lb-prev" class="ghost"
               style="position:absolute;left:12px;top:50%;transform:translateY(-50%);padding:10px 14px;font-size:18px${currentIdx === 0 ? ';opacity:0.2;cursor:default' : ''}">‹</button>
       <img src="${convertFileSrc(fi.path)}"
