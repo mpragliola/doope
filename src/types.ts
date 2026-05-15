@@ -1,6 +1,6 @@
 export type MediaType = 'image' | 'video';
 export type DuplicateType = 'exact' | 'perceptual' | 'filename';
-export type Phase = 'hashing' | 'grouping' | 'done';
+export type Phase = 'walking' | 'hashing' | 'grouping' | 'done';
 export type ScanMode = 'filename' | 'content' | 'both';
 export type VideoStrategy = 'exact_only' | 'first_frame' | 'multi_frame';
 
@@ -32,4 +32,5 @@ export interface ProgressEvent {
   total: number;
   path: string;
   phase: Phase;
+  cached?: number;
 }
