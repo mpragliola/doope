@@ -4,12 +4,14 @@ use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 
 use crate::cache::Cache;
-use crate::models::{DuplicateGroup, Phase, ProgressEvent, ScanOptions};
+use crate::models::{DuplicateGroup, FileRecord, Phase, ProgressEvent, ScanMode, ScanOptions};
 use crate::scanner::{grouper::find_duplicates, run_phase1};
 
 pub struct AppState {
     pub cache: Arc<Mutex<Cache>>,
     pub groups: Arc<Mutex<Vec<DuplicateGroup>>>,
+    pub records: Arc<Mutex<Vec<FileRecord>>>,
+    pub last_mode: Arc<Mutex<ScanMode>>,
     pub folder_priorities: Arc<Mutex<Vec<String>>>,
     pub cancel: Arc<AtomicBool>,
 }
@@ -22,6 +24,8 @@ impl AppState {
         Self {
             cache: Arc::new(Mutex::new(cache)),
             groups: Arc::new(Mutex::new(vec![])),
+            records: Arc::new(Mutex::new(vec![])),
+            last_mode: Arc::new(Mutex::new(ScanMode::Both)),
             folder_priorities: Arc::new(Mutex::new(vec![])),
             cancel: Arc::new(AtomicBool::new(false)),
         }
@@ -55,6 +59,10 @@ pub async fn scan(
         phase: Phase::Grouping,
     });
 
+    // Store raw records and scan mode for post-scan re-grouping
+    *state.records.lock().unwrap() = result.records.clone();
+    *state.last_mode.lock().unwrap() = options.mode.clone();
+
     let groups = {
         let records = result.records.clone();
         let opts = options.clone();
@@ -84,6 +92,22 @@ pub async fn cancel_scan(state: tauri::State<'_, AppState>) -> Result<(), String
 }
 
 #[tauri::command]
+pub async fn regroup(
+    threshold: u32,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let records = state.records.lock().unwrap().clone();
+    let mode = state.last_mode.lock().unwrap().clone();
+    let groups = tokio::task::spawn_blocking(move || {
+        find_duplicates(&records, &mode, threshold)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    *state.groups.lock().unwrap() = groups;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn get_duplicate_groups(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<DuplicateGroup>, String> {
@@ -97,6 +121,13 @@ pub async fn set_folder_priorities(
 ) -> Result<(), String> {
     *state.folder_priorities.lock().unwrap() = priorities;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_folder_priorities(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    Ok(state.folder_priorities.lock().unwrap().clone())
 }
 
 #[tauri::command]
