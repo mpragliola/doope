@@ -2,14 +2,42 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { api } from '../api';
 import { navigate, showToast } from '../main';
 import type { ScanOptions } from '../types';
+import { setLastPhashThreshold } from '../scan-state';
+
+const STORAGE_KEY = 'doope.folders';
 
 let folders: string[] = [];
 let priorities: string[] = [];
 
+function loadPersistedFolders() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const { folders: f, priorities: p } = JSON.parse(raw);
+      if (Array.isArray(f)) folders = f;
+      if (Array.isArray(p)) priorities = p;
+    }
+  } catch { /* ignore corrupt storage */ }
+}
+
+function persistFolders() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ folders, priorities }));
+}
+
 export function renderScanConfig(el: HTMLElement) {
   el.innerHTML = `
     <div class="toolbar">
-      <h1>Doope</h1>
+      <h1 style="display:flex;align-items:center;gap:9px">
+        <svg width="22" height="26" viewBox="0 0 22 26" fill="none" aria-hidden="true">
+          <rect x="6" y="0" width="15" height="19" rx="2.5"
+                fill="#0f1e2e" stroke="#3b82f6" stroke-width="1.5" stroke-opacity="0.45"/>
+          <rect x="1" y="5" width="15" height="19" rx="2.5" fill="#3b82f6"/>
+          <rect x="4.5" y="10.5" width="7.5" height="1.8" rx="0.9" fill="rgba(255,255,255,0.82)"/>
+          <rect x="4.5" y="14"   width="5.5" height="1.8" rx="0.9" fill="rgba(255,255,255,0.52)"/>
+          <rect x="4.5" y="17.5" width="6.5" height="1.8" rx="0.9" fill="rgba(255,255,255,0.3)"/>
+        </svg>
+        Doope
+      </h1>
       <button class="ghost" id="btn-clear-cache">Clear Cache</button>
     </div>
     <div style="display:flex;flex:1;overflow:hidden">
@@ -65,12 +93,23 @@ export function renderScanConfig(el: HTMLElement) {
     </div>
   `;
 
+  loadPersistedFolders();
+  renderFolderList();
+  renderPriorityList();
+  updateStartButton();
   wireEvents(el);
   checkFfmpeg();
 }
 
 async function checkFfmpeg() {
-  const available = await api.checkFfmpeg();
+  let available: boolean;
+  try {
+    available = await api.checkFfmpeg();
+  } catch (e) {
+    showToast(`IPC broken: ${e}`, 'error');
+    console.error('checkFfmpeg failed:', e);
+    return;
+  }
   if (!available) {
     const warning = document.getElementById('ffmpeg-warning')!;
     const sel = document.getElementById('sel-video') as HTMLSelectElement;
@@ -99,7 +138,14 @@ function wireEvents(el: HTMLElement) {
 }
 
 async function addFolder() {
-  const selected = await open({ multiple: true, directory: true });
+  let selected: string | string[] | null;
+  try {
+    selected = await open({ multiple: true, directory: true });
+  } catch (e) {
+    showToast(String(e), 'error');
+    console.error('dialog open failed:', e);
+    return;
+  }
   if (!selected) return;
   const newFolders = Array.isArray(selected) ? selected : [selected];
   for (const f of newFolders) {
@@ -108,6 +154,7 @@ async function addFolder() {
       if (!priorities.includes(f)) priorities.push(f);
     }
   }
+  persistFolders();
   renderFolderList();
   renderPriorityList();
   updateStartButton();
@@ -117,7 +164,7 @@ function renderFolderList() {
   const ul = document.getElementById('folder-list')!;
   ul.innerHTML = folders.map((f, i) => `
     <li style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:#1a1a1a;border-radius:4px;font-size:12px">
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f}">${f}</span>
+      <span class="mono" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f}">${f}</span>
       <button class="ghost" data-idx="${i}" style="padding:2px 8px;font-size:11px">✕</button>
     </li>
   `).join('');
@@ -126,6 +173,7 @@ function renderFolderList() {
       const idx = parseInt((btn as HTMLElement).dataset.idx!);
       const removed = folders.splice(idx, 1)[0];
       priorities = priorities.filter(p => p !== removed);
+      persistFolders();
       renderFolderList();
       renderPriorityList();
       updateStartButton();
@@ -139,7 +187,7 @@ function renderPriorityList() {
     <li draggable="true" data-idx="${i}"
         style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:#222;border-radius:4px;font-size:11px;cursor:grab">
       <span style="color:#666;margin-right:4px">${i + 1}.</span>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${f}">${f}</span>
+      <span class="mono" style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${f}">${f}</span>
     </li>
   `).join('');
 
@@ -152,6 +200,7 @@ function renderPriorityList() {
       if (dragSrc !== dest) {
         const [item] = priorities.splice(dragSrc, 1);
         priorities.splice(dest, 0, item);
+        persistFolders();
         renderPriorityList();
       }
     });
@@ -182,6 +231,7 @@ async function startScan() {
     multi_frame_count: 8,
   };
 
+  setLastPhashThreshold(threshold);
   navigate('progress');
   api.scan(options).catch(e => {
     showToast(String(e));
