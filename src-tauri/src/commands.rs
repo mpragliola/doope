@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use rayon::prelude::*;
 use tauri::Emitter;
 
 use crate::cache::Cache;
@@ -14,6 +15,7 @@ pub struct AppState {
     pub last_mode: Arc<Mutex<ScanMode>>,
     pub folder_priorities: Arc<Mutex<Vec<String>>>,
     pub cancel: Arc<AtomicBool>,
+    pub scanning: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -28,6 +30,7 @@ impl AppState {
             last_mode: Arc::new(Mutex::new(ScanMode::Both)),
             folder_priorities: Arc::new(Mutex::new(vec![])),
             cancel: Arc::new(AtomicBool::new(false)),
+            scanning: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -38,25 +41,37 @@ pub async fn scan(
     options: ScanOptions,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    // Reject if a scan is already in progress (cancel first, then retry).
+    if state.scanning.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+        return Err("scan already in progress".to_string());
+    }
+
     state.cancel.store(false, Ordering::Relaxed);
     let cache = Arc::clone(&state.cache);
     let cancel = Arc::clone(&state.cancel);
+    let scanning = Arc::clone(&state.scanning);
     let app_clone = app.clone();
     let options_for_phase1 = options.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        run_phase1(&options_for_phase1, cache, cancel, move |evt| {
+        let r = run_phase1(&options_for_phase1, cache, cancel, move |evt| {
             let _ = app_clone.emit("progress", &evt);
-        })
+        });
+        scanning.store(false, Ordering::Release);
+        r
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        state.scanning.store(false, Ordering::Release);
+        e.to_string()
+    })?;
 
     let _ = app.emit("progress", &ProgressEvent {
         current: 0,
         total: 0,
         path: String::new(),
         phase: Phase::Grouping,
+        cached: None,
     });
 
     // Store raw records and scan mode for post-scan re-grouping
@@ -80,6 +95,7 @@ pub async fn scan(
         total: 0,
         path: String::new(),
         phase: Phase::Done,
+        cached: None,
     });
 
     Ok(())
@@ -185,14 +201,19 @@ pub async fn delete_marked(
     }
     drop(groups);
 
+    let results: Vec<Result<String, String>> = paths_to_delete
+        .par_iter()
+        .map(|path| {
+            std::fs::remove_file(path)
+                .map(|_| path.clone())
+                .map_err(|e| format!("{}: {}", path, e))
+        })
+        .collect();
+
     let mut deleted = Vec::new();
     let mut errors = Vec::new();
-
-    for path in &paths_to_delete {
-        match std::fs::remove_file(path) {
-            Ok(_) => deleted.push(path.clone()),
-            Err(e) => errors.push(format!("{}: {}", path, e)),
-        }
+    for r in results {
+        match r { Ok(p) => deleted.push(p), Err(e) => errors.push(e) }
     }
 
     {

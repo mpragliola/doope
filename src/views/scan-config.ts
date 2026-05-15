@@ -233,10 +233,33 @@ async function startScan() {
 
   setLastPhashThreshold(threshold);
   navigate('progress');
-  api.scan(options).catch(e => {
-    showToast(String(e));
-    navigate('scan-config');
-  });
+
+  const MAX_WAIT_MS = 30_000;
+  const RETRY_MS = 500;
+  const deadline = Date.now() + MAX_WAIT_MS;
+
+  while (true) {
+    try {
+      await api.scan(options);
+      return;
+    } catch (e) {
+      const msg = String(e);
+      if (msg.includes('scan already in progress')) {
+        if (Date.now() >= deadline) {
+          showToast('Timed out waiting for previous scan to stop', 'error');
+          navigate('scan-config');
+          return;
+        }
+        const phaseLabel = document.getElementById('phase-label');
+        if (phaseLabel) phaseLabel.textContent = 'Waiting for previous scan to stop…';
+        await new Promise(r => setTimeout(r, RETRY_MS));
+      } else {
+        showToast(msg);
+        navigate('scan-config');
+        return;
+      }
+    }
+  }
 }
 
 async function clearCache() {
