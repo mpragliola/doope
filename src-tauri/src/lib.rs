@@ -12,7 +12,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::scan,
             commands::cancel_scan,
+            commands::regroup,
             commands::get_duplicate_groups,
+            commands::get_folder_priorities,
             commands::set_folder_priorities,
             commands::auto_mark_group,
             commands::delete_marked,
