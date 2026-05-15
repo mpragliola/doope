@@ -410,7 +410,41 @@ function openLightbox(f: FileInfo, group: DuplicateGroup) {
 
   document.addEventListener('keydown', onKey);
 }
-function showLastCopyWarning(_cell: HTMLElement, _path: string, _group: DuplicateGroup) { /* implemented in Task 11 */ }
+function showLastCopyWarning(cell: HTMLElement, path: string, group: DuplicateGroup) {
+  // Remove any existing warning in this group's panel
+  document.querySelectorAll('.last-copy-warning').forEach(w => w.remove());
+
+  const warning = document.createElement('div');
+  warning.className = 'last-copy-warning';
+  warning.style.cssText = [
+    'position:absolute;bottom:44px;left:0;right:0',
+    'background:#7f1d1d;color:#fca5a5;font-size:11px',
+    'padding:6px 10px;display:flex;align-items:center;gap:8px;z-index:10',
+  ].join(';');
+  warning.innerHTML = `
+    <span style="flex:1">Last copy — mark anyway?</span>
+    <button class="danger" data-action="confirm-delete" style="font-size:10px;padding:3px 8px">Confirm</button>
+    <button class="ghost" data-action="cancel-delete" style="font-size:10px;padding:3px 8px">Cancel</button>
+  `;
+
+  // The cell needs position:relative for the warning overlay to work
+  cell.style.position = 'relative';
+  cell.appendChild(warning);
+
+  warning.querySelector('[data-action=confirm-delete]')!.addEventListener('click', (e) => {
+    e.stopPropagation();
+    warning.remove();
+    marked.add(path);
+    renderComparisonPanel(group);
+    renderGroupList();
+    updateBottomBar();
+  });
+
+  warning.querySelector('[data-action=cancel-delete]')!.addEventListener('click', (e) => {
+    e.stopPropagation();
+    warning.remove();
+  });
+}
 
 function updateBottomBar() {
   const deleteBtn = document.getElementById('btn-delete') as HTMLButtonElement;
