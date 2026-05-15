@@ -20,7 +20,7 @@ export function renderProgress(el: HTMLElement) {
           <div id="progress-bar" style="height:100%;background:#3b82f6;width:0%;transition:width 0.1s"></div>
         </div>
       </div>
-      <div id="current-path" style="font-size:11px;color:#666;max-width:600px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%"></div>
+      <div id="current-path" class="mono" style="color:#555;max-width:600px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%"></div>
     </div>
   `;
 
