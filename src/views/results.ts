@@ -352,7 +352,57 @@ async function autoMark(group: DuplicateGroup) {
   }
 }
 
-function openLightbox(_f: FileInfo, _group: DuplicateGroup) { /* implemented in Task 10 */ }
+function openLightbox(f: FileInfo, group: DuplicateGroup) {
+  const imageFiles = group.files.filter(fi => fi.media_type === 'image');
+  let currentIdx = imageFiles.findIndex(fi => fi.path === f.path);
+
+  const overlay = document.createElement('div');
+  overlay.id = 'lightbox-overlay';
+  overlay.style.cssText = [
+    'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.92)',
+    'display:flex;flex-direction:column;align-items:center;justify-content:center',
+  ].join(';');
+
+  function renderLightboxContent() {
+    const fi = imageFiles[currentIdx];
+    overlay.innerHTML = `
+      <div style="position:absolute;top:12px;right:12px;display:flex;gap:8px">
+        <span style="font-size:12px;color:#888;align-self:center">${currentIdx + 1} / ${imageFiles.length}</span>
+        <button id="lb-close" class="ghost" style="padding:5px 12px;font-size:13px">✕ Close</button>
+      </div>
+      <div style="position:absolute;bottom:16px;font-size:12px;color:#888;max-width:80%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+           title="${escapeAttr(fi.path)}">${fi.path}</div>
+      <button id="lb-prev" class="ghost"
+              style="position:absolute;left:12px;top:50%;transform:translateY(-50%);padding:10px 14px;font-size:18px${currentIdx === 0 ? ';opacity:0.2;cursor:default' : ''}">‹</button>
+      <img src="${convertFileSrc(fi.path)}"
+           style="max-width:calc(100vw - 120px);max-height:calc(100vh - 80px);object-fit:contain;border-radius:4px">
+      <button id="lb-next" class="ghost"
+              style="position:absolute;right:12px;top:50%;transform:translateY(-50%);padding:10px 14px;font-size:18px${currentIdx === imageFiles.length - 1 ? ';opacity:0.2;cursor:default' : ''}">›</button>
+    `;
+
+    overlay.querySelector('#lb-close')!.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('#lb-prev')!.addEventListener('click', () => {
+      if (currentIdx > 0) { currentIdx--; renderLightboxContent(); }
+    });
+    overlay.querySelector('#lb-next')!.addEventListener('click', () => {
+      if (currentIdx < imageFiles.length - 1) { currentIdx++; renderLightboxContent(); }
+    });
+  }
+
+  renderLightboxContent();
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey); }
+    if (e.key === 'ArrowLeft' && currentIdx > 0) { currentIdx--; renderLightboxContent(); }
+    if (e.key === 'ArrowRight' && currentIdx < imageFiles.length - 1) { currentIdx++; renderLightboxContent(); }
+  };
+  document.addEventListener('keydown', onKey);
+}
 function showLastCopyWarning(_cell: HTMLElement, _path: string, _group: DuplicateGroup) { /* implemented in Task 11 */ }
 
 function updateBottomBar() {
