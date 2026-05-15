@@ -1,5 +1,5 @@
 import { api } from '../api';
-import { navigate, showToast } from '../main';
+import { navigate } from '../main';
 import type { ProgressEvent } from '../types';
 
 let unlisten: (() => void) | null = null;
