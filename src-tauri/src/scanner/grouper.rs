@@ -10,18 +10,23 @@ pub fn find_duplicates(
     records: &[FileRecord],
     mode: &ScanMode,
     threshold: u32,
+    progress: impl Fn(&str) + Send + Sync,
 ) -> Vec<DuplicateGroup> {
     let mut groups: Vec<DuplicateGroup> = Vec::new();
 
     match mode {
         ScanMode::Filename => {
+            progress("filename");
             groups.extend(group_by_filename(records));
         }
         ScanMode::Content => {
+            progress("exact");
             groups.extend(group_by_exact(records));
+            progress("perceptual");
             groups.extend(group_by_phash(records, threshold));
         }
         ScanMode::Both => {
+            progress("filename");
             let filename_groups = group_by_filename(records);
             let filename_grouped_paths: std::collections::HashSet<String> = filename_groups
                 .iter()
@@ -34,7 +39,9 @@ pub fn find_duplicates(
                 .filter(|r| !filename_grouped_paths.contains(&r.path))
                 .cloned()
                 .collect();
+            progress("exact");
             groups.extend(group_by_exact(&remaining));
+            progress("perceptual");
             groups.extend(group_by_phash(&remaining, threshold));
         }
     }
@@ -235,7 +242,7 @@ mod tests {
             rec("/b/img2.jpg", 1000, "hash_abc", None),
             rec("/c/img3.jpg", 2000, "hash_xyz", None),
         ];
-        let groups = find_duplicates(&records, &ScanMode::Content, 8);
+        let groups = find_duplicates(&records, &ScanMode::Content, 8, |_| {});
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].files.len(), 2);
         assert_eq!(groups[0].duplicate_type, DuplicateType::Exact);
@@ -247,7 +254,7 @@ mod tests {
             rec("/a/photo.jpg", 500, "h1", None),
             rec("/b/photo.jpg", 500, "h2", None),
         ];
-        let groups = find_duplicates(&records, &ScanMode::Filename, 8);
+        let groups = find_duplicates(&records, &ScanMode::Filename, 8, |_| {});
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].duplicate_type, DuplicateType::Filename);
     }
@@ -258,7 +265,7 @@ mod tests {
             rec("/a/img1.jpg", 1000, "hash_a", None),
             rec("/b/img2.jpg", 2000, "hash_b", None),
         ];
-        let groups = find_duplicates(&records, &ScanMode::Content, 8);
+        let groups = find_duplicates(&records, &ScanMode::Content, 8, |_| {});
         assert_eq!(groups.len(), 0);
     }
 
@@ -269,7 +276,7 @@ mod tests {
             rec("/b/img2.jpg", 1000, "same", None),
             rec("/c/img3.jpg", 1000, "same", None),
         ];
-        let groups = find_duplicates(&records, &ScanMode::Content, 8);
+        let groups = find_duplicates(&records, &ScanMode::Content, 8, |_| {});
         assert_eq!(groups[0].wasted_bytes, 2000);
     }
 
@@ -296,7 +303,7 @@ mod tests {
                 media_type: MediaType::Image,
             },
         ];
-        let groups = find_duplicates(&records, &ScanMode::Content, 8);
+        let groups = find_duplicates(&records, &ScanMode::Content, 8, |_| {});
         assert_eq!(groups.len(), 1);
         // max pairwise distance: h1↔h3 = 2
         assert_eq!(groups[0].max_distance, Some(2));
@@ -308,7 +315,25 @@ mod tests {
             rec("/a/img1.jpg", 1000, "hash_abc", None),
             rec("/b/img2.jpg", 1000, "hash_abc", None),
         ];
-        let groups = find_duplicates(&records, &ScanMode::Content, 8);
+        let groups = find_duplicates(&records, &ScanMode::Content, 8, |_| {});
         assert_eq!(groups[0].max_distance, None);
+    }
+
+    #[test]
+    fn progress_callback_receives_phase_strings() {
+        use std::sync::{Arc, Mutex};
+        let records = vec![
+            rec("/a/img1.jpg", 1000, "hash_abc", Some("0000000000000000")),
+            rec("/b/img2.jpg", 1000, "hash_abc", Some("0000000000000001")),
+        ];
+        let phases: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let phases_clone = Arc::clone(&phases);
+        find_duplicates(&records, &ScanMode::Both, 8, move |p| {
+            phases_clone.lock().unwrap().push(p.to_string());
+        });
+        let called = phases.lock().unwrap();
+        assert!(called.contains(&"filename".to_string()));
+        assert!(called.contains(&"exact".to_string()));
+        assert!(called.contains(&"perceptual".to_string()));
     }
 }
