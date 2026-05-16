@@ -440,12 +440,26 @@ function renderGroupDetail(group: DuplicateGroup) {
 function renderComparisonPanel(group: DuplicateGroup) {
   const grid = document.getElementById('file-grid')!;
 
+  const maxPixels = group.files.reduce((max, f) => {
+    const px = (f.width && f.height) ? f.width * f.height : 0;
+    return px > max ? px : max;
+  }, 0);
+
   grid.innerHTML = group.files.map(f => {
     const isMarked = marked.has(f.path);
     const isImage = f.media_type === 'image';
     const sizeMb = (f.size / 1_048_576).toFixed(2);
     const borderColor = isMarked ? '#7f1d1d' : '#1a3a28';
     const stripBg = isMarked ? '#2d1515' : '#0f1f18';
+    const px = (f.width && f.height) ? f.width * f.height : 0;
+    const isBestRes = maxPixels > 0 && px === maxPixels;
+
+    const resBadge = isBestRes
+      ? `<span style="font-size:9px;font-weight:700;background:#854d0e;color:#fde68a;border-radius:3px;padding:1px 4px;flex-shrink:0">★ Best</span>`
+      : '';
+    const resLabel = (f.width && f.height)
+      ? `<span style="font-size:10px;color:${isBestRes ? '#fde68a' : '#666'}">${f.width}×${f.height}</span>`
+      : '';
 
     const imageArea = isImage
       ? `<div style="flex:1;position:relative;min-height:0;overflow:hidden;background:#080808">
@@ -464,11 +478,15 @@ function renderComparisonPanel(group: DuplicateGroup) {
         ${imageArea}
         <div style="min-height:56px;display:flex;align-items:center;gap:6px;padding:4px 8px;background:${stripBg};flex-shrink:0">
           <div style="flex:1;overflow:hidden;min-width:0">
-            <div style="font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                 title="${escapeAttr(f.path)}">${filename(f.path)}</div>
+            <div style="font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:4px">
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttr(f.path)}">${filename(f.path)}</span>
+              ${resBadge}
+            </div>
             <div style="font-size:10px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                  title="${escapeAttr(f.path)}">${escapeAttr(f.path)}</div>
-            <div style="font-size:10px;color:#888">${sizeMb} MB</div>
+            <div style="font-size:10px;color:#888;display:flex;gap:6px">
+              <span>${sizeMb} MB</span>${resLabel}
+            </div>
           </div>
           <button class="${isMarked ? 'ghost' : 'primary'}" data-action="keep"
                   style="font-size:10px;padding:3px 8px;flex-shrink:0">Keep</button>
