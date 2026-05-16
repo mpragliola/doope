@@ -119,13 +119,17 @@ pub async fn cancel_scan(state: tauri::State<'_, AppState>) -> Result<(), String
 
 #[tauri::command]
 pub async fn regroup(
+    app: tauri::AppHandle,
     threshold: u32,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let records = state.records.lock().unwrap().clone();
     let mode = state.last_mode.lock().unwrap().clone();
+    let app_clone = app.clone();
     let groups = tokio::task::spawn_blocking(move || {
-        find_duplicates(&records, &mode, threshold, |_| {})
+        find_duplicates(&records, &mode, threshold, |phase| {
+            let _ = app_clone.emit("regroup-progress", phase);
+        })
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -156,9 +160,42 @@ pub async fn get_folder_priorities(
     Ok(state.folder_priorities.lock().unwrap().clone())
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoMarkMode {
+    Priority,
+    Quality,
+}
+
+fn select_keeper<'a>(
+    files: &'a [crate::models::FileInfo],
+    priorities: &[String],
+    mode: &AutoMarkMode,
+) -> Option<&'a crate::models::FileInfo> {
+    match mode {
+        AutoMarkMode::Priority => files.iter().min_by_key(|f| {
+            priorities
+                .iter()
+                .position(|p| f.path.starts_with(p.as_str()))
+                .unwrap_or(usize::MAX)
+        }),
+        AutoMarkMode::Quality => files.iter().max_by_key(|f| {
+            let area = image::image_dimensions(&f.path)
+                .map(|(w, h)| w as u64 * h as u64)
+                .unwrap_or(0);
+            let prio_rank = priorities
+                .iter()
+                .position(|p| f.path.starts_with(p.as_str()))
+                .unwrap_or(usize::MAX);
+            (area, usize::MAX - prio_rank)
+        }),
+    }
+}
+
 #[tauri::command]
 pub async fn auto_mark_group(
     group_id: String,
+    mode: AutoMarkMode,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
     let groups = state.groups.lock().unwrap();
@@ -169,14 +206,10 @@ pub async fn auto_mark_group(
         .find(|g| g.id == group_id)
         .ok_or_else(|| format!("group {} not found", group_id))?;
 
-    let keeper = group.files.iter().min_by_key(|f| {
-        priorities
-            .iter()
-            .position(|p| f.path.starts_with(p.as_str()))
-            .unwrap_or(usize::MAX)
-    });
+    let keeper_path = select_keeper(&group.files, &priorities, &mode)
+        .map(|f| f.path.clone())
+        .unwrap_or_default();
 
-    let keeper_path = keeper.map(|f| f.path.as_str()).unwrap_or("");
     let marked: Vec<String> = group
         .files
         .iter()
@@ -280,33 +313,13 @@ mod tests {
     }
 
     fn priority_keeper(group: &DuplicateGroup, priorities: &[String]) -> String {
-        group
-            .files
-            .iter()
-            .min_by_key(|f| {
-                priorities
-                    .iter()
-                    .position(|p| f.path.starts_with(p.as_str()))
-                    .unwrap_or(usize::MAX)
-            })
+        select_keeper(&group.files, priorities, &AutoMarkMode::Priority)
             .map(|f| f.path.clone())
             .unwrap_or_default()
     }
 
     fn quality_keeper(group: &DuplicateGroup, priorities: &[String]) -> String {
-        group
-            .files
-            .iter()
-            .max_by_key(|f| {
-                let area = image::image_dimensions(&f.path)
-                    .map(|(w, h)| w as u64 * h as u64)
-                    .unwrap_or(0);
-                let prio = priorities
-                    .iter()
-                    .position(|p| f.path.starts_with(p.as_str()))
-                    .unwrap_or(usize::MAX);
-                (area, usize::MAX - prio)
-            })
+        select_keeper(&group.files, priorities, &AutoMarkMode::Quality)
             .map(|f| f.path.clone())
             .unwrap_or_default()
     }
