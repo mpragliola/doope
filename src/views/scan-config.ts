@@ -7,21 +7,20 @@ import { setLastPhashThreshold } from '../scan-state';
 const STORAGE_KEY = 'doope.folders';
 
 let folders: string[] = [];
-let priorities: string[] = [];
 
 function loadPersistedFolders() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const { folders: f, priorities: p } = JSON.parse(raw);
-      if (Array.isArray(f)) folders = f;
-      if (Array.isArray(p)) priorities = p;
+      const parsed = JSON.parse(raw);
+      // Support both new format (folders only) and old format (folders + priorities)
+      if (Array.isArray(parsed.folders)) folders = parsed.folders;
     }
   } catch { /* ignore corrupt storage */ }
 }
 
 function persistFolders() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ folders, priorities }));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ folders }));
 }
 
 export function renderScanConfig(el: HTMLElement) {
@@ -44,14 +43,10 @@ export function renderScanConfig(el: HTMLElement) {
       <div style="width:340px;display:flex;flex-direction:column;border-right:1px solid #2a2a2a;padding:16px;gap:12px">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="flex:1;font-weight:600">Folders</span>
+          <span style="font-size:11px;color:#555">drag to set priority</span>
           <button class="ghost" id="btn-add-folder" style="padding:5px 12px;font-size:12px">+ Add</button>
         </div>
         <ul id="folder-list" class="scroll-list" style="list-style:none;gap:4px;display:flex;flex-direction:column"></ul>
-
-        <div style="margin-top:8px">
-          <label>Folder Priority (drag to reorder)</label>
-          <ul id="priority-list" class="scroll-list" style="list-style:none;gap:4px;display:flex;flex-direction:column;min-height:40px;border:1px solid #2a2a2a;border-radius:6px;padding:6px"></ul>
-        </div>
       </div>
 
       <div style="flex:1;padding:24px;display:flex;flex-direction:column;gap:20px;overflow-y:auto">
@@ -95,7 +90,6 @@ export function renderScanConfig(el: HTMLElement) {
 
   loadPersistedFolders();
   renderFolderList();
-  renderPriorityList();
   updateStartButton();
   wireEvents(el);
   checkFfmpeg();
@@ -149,60 +143,74 @@ async function addFolder() {
   if (!selected) return;
   const newFolders = Array.isArray(selected) ? selected : [selected];
   for (const f of newFolders) {
-    if (!folders.includes(f)) {
-      folders.push(f);
-      if (!priorities.includes(f)) priorities.push(f);
-    }
+    if (!folders.includes(f)) folders.push(f);
   }
   persistFolders();
   renderFolderList();
-  renderPriorityList();
   updateStartButton();
 }
+
+const grip = `<svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" style="display:block">
+  <circle cx="3" cy="3" r="1.2"/><circle cx="7" cy="3" r="1.2"/>
+  <circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/>
+  <circle cx="3" cy="11" r="1.2"/><circle cx="7" cy="11" r="1.2"/>
+</svg>`;
 
 function renderFolderList() {
   const ul = document.getElementById('folder-list')!;
   ul.innerHTML = folders.map((f, i) => `
-    <li style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:#1a1a1a;border-radius:4px;font-size:12px">
-      <span class="mono" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f}">${f}</span>
-      <button class="ghost" data-idx="${i}" style="padding:2px 8px;font-size:11px">✕</button>
-    </li>
-  `).join('');
-  ul.querySelectorAll('button[data-idx]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = parseInt((btn as HTMLElement).dataset.idx!);
-      const removed = folders.splice(idx, 1)[0];
-      priorities = priorities.filter(p => p !== removed);
-      persistFolders();
-      renderFolderList();
-      renderPriorityList();
-      updateStartButton();
-    });
-  });
-}
-
-function renderPriorityList() {
-  const ul = document.getElementById('priority-list')!;
-  ul.innerHTML = priorities.map((f, i) => `
     <li draggable="true" data-idx="${i}"
-        style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:#222;border-radius:4px;font-size:11px;cursor:grab">
-      <span style="color:#666;margin-right:4px">${i + 1}.</span>
-      <span class="mono" style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${f}">${f}</span>
+        style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:#1a1a1a;border-radius:4px;font-size:12px;user-select:none;cursor:grab">
+      <span style="display:flex;align-items:center;color:#555;flex-shrink:0;pointer-events:none">${grip}</span>
+      <span class="mono" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f}">${f}</span>
+      <button class="ghost" data-remove="${i}" style="padding:2px 8px;font-size:11px;cursor:pointer">✕</button>
     </li>
   `).join('');
 
   let dragSrc = -1;
-  ul.querySelectorAll('li').forEach(li => {
-    li.addEventListener('dragstart', () => { dragSrc = parseInt(li.dataset.idx!); });
-    li.addEventListener('dragover', e => { e.preventDefault(); });
-    li.addEventListener('drop', () => {
+
+  ul.querySelectorAll<HTMLElement>('li[data-idx]').forEach(li => {
+    li.addEventListener('dragstart', (e) => {
+      dragSrc = parseInt(li.dataset.idx!);
+      e.dataTransfer!.effectAllowed = 'move';
+      setTimeout(() => { li.style.opacity = '0.4'; }, 0);
+    });
+    li.addEventListener('dragend', () => {
+      li.style.opacity = '';
+      ul.querySelectorAll<HTMLElement>('li').forEach(l => l.style.removeProperty('outline'));
+      dragSrc = -1;
+    });
+    li.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = 'move';
+      ul.querySelectorAll<HTMLElement>('li').forEach(l => l.style.removeProperty('outline'));
+      if (parseInt(li.dataset.idx!) !== dragSrc) li.style.outline = '1px solid #3b82f6';
+    });
+    li.addEventListener('dragleave', () => {
+      li.style.removeProperty('outline');
+    });
+    li.addEventListener('drop', (e) => {
+      e.preventDefault();
+      li.style.removeProperty('outline');
       const dest = parseInt(li.dataset.idx!);
-      if (dragSrc !== dest) {
-        const [item] = priorities.splice(dragSrc, 1);
-        priorities.splice(dest, 0, item);
+      if (dragSrc !== -1 && dragSrc !== dest) {
+        const [item] = folders.splice(dragSrc, 1);
+        folders.splice(dest, 0, item);
         persistFolders();
-        renderPriorityList();
+        renderFolderList();
+        updateStartButton();
       }
+    });
+  });
+
+  ul.querySelectorAll<HTMLElement>('button[data-remove]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = parseInt(btn.dataset.remove!);
+      folders.splice(idx, 1);
+      persistFolders();
+      renderFolderList();
+      updateStartButton();
     });
   });
 }
@@ -220,14 +228,14 @@ async function startScan() {
   const videoStrategy = (document.getElementById('sel-video') as HTMLSelectElement).value as ScanOptions['video_strategy'];
   const threshold = parseInt((document.getElementById('slider-threshold') as HTMLInputElement).value);
 
-  await api.setFolderPriorities(priorities);
+  await api.setFolderPriorities(folders);
 
   const options: ScanOptions = {
     folders,
     mode,
     video_strategy: videoStrategy,
     phash_threshold: threshold,
-    folder_priorities: priorities,
+    folder_priorities: folders,
     multi_frame_count: 8,
   };
 

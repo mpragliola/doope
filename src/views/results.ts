@@ -10,7 +10,6 @@ let selectedGroupId: string | null = null;
 let selectedGroupIds = new Set<string>();
 let lastClickedSortedIndex = -1;
 let currentThreshold = 8;
-let resultsPriorities: string[] = [];
 let resultsKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 type SortMode = 'default' | 'files-desc' | 'files-asc' | 'size-desc' | 'size-asc';
 let sortMode: SortMode = 'default';
@@ -26,12 +25,7 @@ export function renderResults(el: HTMLElement) {
       <span style="font-size:12px;color:#888">Threshold:</span>
       <input type="range" id="results-threshold" min="0" max="20" value="8" style="width:110px;padding:0">
       <span id="results-threshold-lbl" style="font-size:12px;min-width:18px;color:#e2e2e2">8</span>
-      <button class="ghost" id="btn-regroup" style="font-size:12px;padding:5px 10px">Re-group <kbd style="font-size:10px;opacity:0.6">R</kbd></button>
-      <button class="ghost" id="btn-toggle-priority" style="font-size:12px;padding:5px 10px;margin-left:auto">Priority ▾</button>
-    </div>
-    <div id="priority-panel" style="display:none;padding:8px 16px;background:#131313;border-bottom:1px solid #2a2a2a;flex-shrink:0">
-      <div style="font-size:11px;color:#666;margin-bottom:6px">Drag to reorder — affects Auto-mark</div>
-      <ul id="results-priority-list" style="list-style:none;display:flex;flex-direction:column;gap:4px"></ul>
+      <button class="ghost" id="btn-regroup" style="font-size:12px;padding:5px 10px;margin-left:auto">Re-group <kbd style="font-size:10px;opacity:0.6">R</kbd></button>
     </div>
     <div style="display:flex;flex:1;overflow:hidden">
       <div style="width:280px;display:flex;flex-direction:column;border-right:1px solid #2a2a2a">
@@ -115,14 +109,6 @@ function wireControlsBar() {
     }
   });
 
-  const toggleBtn = document.getElementById('btn-toggle-priority')!;
-  const panel = document.getElementById('priority-panel')!;
-  toggleBtn.addEventListener('click', () => {
-    const open = panel.style.display !== 'none';
-    panel.style.display = open ? 'none' : 'block';
-    toggleBtn.textContent = open ? 'Priority ▾' : 'Priority ▴';
-  });
-
   wireSortDropdown();
 }
 
@@ -181,62 +167,8 @@ export async function loadResults() {
     lbl.textContent = String(currentThreshold);
   }
 
-  // Load folder priorities
-  try {
-    resultsPriorities = await api.getFolderPriorities();
-  } catch {
-    resultsPriorities = [];
-  }
-  renderResultsPriorityList();
-
   renderGroupList();
   updateBottomBar();
-}
-
-function renderResultsPriorityList() {
-  const ul = document.getElementById('results-priority-list');
-  if (!ul) return;
-  const grip = `<svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" style="display:block">
-    <circle cx="3" cy="3" r="1.2"/><circle cx="7" cy="3" r="1.2"/>
-    <circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/>
-    <circle cx="3" cy="11" r="1.2"/><circle cx="7" cy="11" r="1.2"/>
-  </svg>`;
-
-  ul.innerHTML = resultsPriorities.map((f, i) => `
-    <li data-idx="${i}"
-        style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:#222;border-radius:4px;font-size:11px;user-select:none">
-      <span class="drag-handle" style="cursor:grab;display:flex;align-items:center;color:#555;flex-shrink:0;touch-action:none">${grip}</span>
-      <span style="color:#666;margin-right:4px">${i + 1}.</span>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${f}">${f}</span>
-    </li>
-  `).join('');
-
-  let srcIdx = -1;
-  ul.querySelectorAll<HTMLElement>('.drag-handle').forEach(handle => {
-    handle.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      const li = handle.closest('li') as HTMLElement;
-      srcIdx = parseInt(li.dataset.idx!);
-      handle.setPointerCapture(e.pointerId);
-      li.style.opacity = '0.5';
-    });
-
-    handle.addEventListener('pointerup', (e) => {
-      if (srcIdx === -1) return;
-      const saved = srcIdx;
-      srcIdx = -1;
-      ul.querySelectorAll<HTMLElement>('li').forEach(l => { l.style.opacity = ''; });
-      const overEl = document.elementFromPoint(e.clientX, e.clientY);
-      const overLi = overEl?.closest('li[data-idx]') as HTMLElement | null;
-      const destIdx = overLi ? parseInt(overLi.dataset.idx!) : saved;
-      if (destIdx !== saved) {
-        const [item] = resultsPriorities.splice(saved, 1);
-        resultsPriorities.splice(destIdx, 0, item);
-        api.setFolderPriorities(resultsPriorities).catch(() => {});
-        renderResultsPriorityList();
-      }
-    });
-  });
 }
 
 function sortedGroups(): DuplicateGroup[] {
