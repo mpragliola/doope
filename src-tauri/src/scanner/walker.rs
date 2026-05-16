@@ -30,7 +30,8 @@ fn walk_single(folder: &str, cancel: &Arc<AtomicBool>) -> Vec<FoundFile> {
         let path = entry.path();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if let Some(media_type) = MediaType::from_extension(ext) {
-            let meta = match std::fs::metadata(&path) {
+            // Use metadata cached by jwalk — avoids a redundant stat syscall per file.
+            let meta = match entry.metadata() {
                 Ok(m) => m,
                 Err(_) => continue,
             };
