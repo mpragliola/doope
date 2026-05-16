@@ -83,6 +83,8 @@ pub struct FileInfo {
     pub path: String,
     pub size: u64,
     pub media_type: MediaType,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -17,6 +17,8 @@ export interface FileInfo {
   path: string;
   size: number;
   media_type: MediaType;
+  width?: number;
+  height?: number;
 }
 
 export interface DuplicateGroup {
