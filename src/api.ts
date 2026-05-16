@@ -21,8 +21,8 @@ export const api = {
   setFolderPriorities: (priorities: string[]) =>
     invoke<void>('set_folder_priorities', { priorities }),
 
-  autoMarkGroup: (groupId: string, mode: 'priority' | 'quality') =>
-    invoke<string[]>('auto_mark_group', { groupId, mode }),
+  autoMarkGroup: (groupId: string) =>
+    invoke<string[]>('auto_mark_group', { groupId }),
 
   deleteMarked: (pathsToDelete: string[]) =>
     invoke<string[]>('delete_marked', { pathsToDelete }),

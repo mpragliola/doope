@@ -12,7 +12,6 @@ let resultsPriorities: string[] = [];
 let resultsKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 type SortMode = 'default' | 'files-desc' | 'files-asc' | 'size-desc' | 'size-asc';
 let sortMode: SortMode = 'default';
-let autoMarkMode: 'priority' | 'quality' = 'priority';
 let fileIndex = new Map<string, FileInfo>();
 let selectedLi: HTMLElement | null = null;
 
@@ -382,15 +381,10 @@ function renderGroupDetail(group: DuplicateGroup) {
         <span style="font-size:13px;font-weight:500">${group.files.length} files</span>
         <span style="font-size:11px;color:#666;margin-left:8px">${headerLabel}</span>
       </div>
-      <div style="display:flex;gap:1px;position:relative">
-        <button class="ghost" data-action="auto-mark" style="font-size:12px;padding:5px 10px;border-radius:4px 0 0 4px">
-          Auto-mark (${autoMarkMode}) <kbd style="font-size:10px;opacity:0.6">A</kbd>
+      <div style="display:flex;gap:1px">
+        <button class="ghost" data-action="auto-mark" style="font-size:12px;padding:5px 10px">
+          Auto-mark <kbd style="font-size:10px;opacity:0.6">A</kbd>
         </button>
-        <button class="ghost" data-action="auto-mark-toggle" style="font-size:12px;padding:5px 7px;border-radius:0 4px 4px 0;border-left:1px solid #333">▾</button>
-        <div id="am-dropdown" style="display:none;position:absolute;right:0;top:100%;z-index:200;background:#1e1e1e;border:1px solid #333;border-radius:4px;min-width:130px;padding:4px 0;margin-top:2px">
-          <button class="ghost" data-action="am-select-priority" style="width:100%;text-align:left;padding:5px 12px;font-size:12px">By priority</button>
-          <button class="ghost" data-action="am-select-quality" style="width:100%;text-align:left;padding:5px 12px;font-size:12px">By quality</button>
-        </div>
       </div>
       <button class="ghost" data-action="keep-all" style="font-size:12px;padding:5px 10px">Keep all <kbd style="font-size:10px;opacity:0.6">K</kbd></button>
       <button class="ghost" data-action="delete-all" style="font-size:12px;padding:5px 10px;color:#fca5a5">Mark all <kbd style="font-size:10px;opacity:0.7">M</kbd></button>
@@ -399,27 +393,6 @@ function renderGroupDetail(group: DuplicateGroup) {
   `;
 
   el.querySelector('[data-action=auto-mark]')!.addEventListener('click', () => autoMark(group));
-
-  const amDropdown = el.querySelector<HTMLElement>('#am-dropdown')!;
-
-  el.querySelector('[data-action=auto-mark-toggle]')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    amDropdown.style.display = amDropdown.style.display === 'none' ? 'block' : 'none';
-  });
-
-  el.querySelector('[data-action=am-select-priority]')!.addEventListener('click', () => {
-    autoMarkMode = 'priority';
-    amDropdown.style.display = 'none';
-    renderGroupDetail(group);
-  });
-
-  el.querySelector('[data-action=am-select-quality]')!.addEventListener('click', () => {
-    autoMarkMode = 'quality';
-    amDropdown.style.display = 'none';
-    renderGroupDetail(group);
-  });
-
-  document.addEventListener('click', () => { amDropdown.style.display = 'none'; }, { once: true });
 
   el.querySelector('[data-action=keep-all]')!.addEventListener('click', () => {
     group.files.forEach(f => marked.delete(f.path));
@@ -512,7 +485,7 @@ function renderComparisonPanel(group: DuplicateGroup) {
 
 async function autoMark(group: DuplicateGroup) {
   try {
-    const toMark = await api.autoMarkGroup(group.id, autoMarkMode);
+    const toMark = await api.autoMarkGroup(group.id);
     toMark.forEach(p => marked.add(p));
     renderComparisonPanel(group);
     renderGroupList();
