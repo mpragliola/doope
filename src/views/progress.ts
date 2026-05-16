@@ -6,16 +6,20 @@ let unlisten: (() => void) | null = null;
 const extCounts = new Map<string, number>();
 let maxCached = 0;
 
-// EMA-based ETA: smooth exponential moving average of files/sec rate.
-const EMA_ALPHA = 0.15; // lower = smoother but slower to react
+// ETA tracker: sliding-window rate for ETA, EMA for rate display.
+// Sliding window ignores the fast cached-file burst at scan start — once the window
+// slides past it, the ETA reflects current (slow) throughput instead of the overall average.
+const EMA_ALPHA = 0.1;
+const WINDOW_SEC = 30;
 
 function makeEtaTracker() {
+  const samples: Array<{ t: number; n: number }> = [];
   let emaRate = 0;
   let lastT = 0;
   let lastN = 0;
   let hasRate = false;
   return {
-    reset() { emaRate = 0; lastT = 0; lastN = 0; hasRate = false; },
+    reset() { samples.length = 0; emaRate = 0; lastT = 0; lastN = 0; hasRate = false; },
     record(n: number) {
       const now = Date.now();
       if (lastT > 0) {
@@ -29,11 +33,18 @@ function makeEtaTracker() {
       }
       lastT = now;
       lastN = n;
+      samples.push({ t: now, n });
+      const cutoff = now - WINDOW_SEC * 1000;
+      while (samples.length > 1 && samples[0].t < cutoff) samples.shift();
     },
     compute(current: number, total: number): { eta: string; rate: string } | null {
-      if (!hasRate || emaRate <= 0) return null;
-      const remaining = total - current;
-      const etaSec = remaining / emaRate;
+      if (!hasRate || current <= 0 || samples.length < 2) return null;
+      const oldest = samples[0];
+      const newest = samples[samples.length - 1];
+      const windowSec = (newest.t - oldest.t) / 1000;
+      const windowRate = windowSec > 0 ? (newest.n - oldest.n) / windowSec : 0;
+      if (windowRate <= 0) return null;
+      const etaSec = (total - current) / windowRate;
       return { eta: formatDuration(etaSec), rate: `${Math.round(emaRate)} files/sec` };
     },
   };
