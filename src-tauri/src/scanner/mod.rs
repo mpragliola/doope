@@ -18,6 +18,8 @@ use video::video_phash;
 pub struct ScanResult {
     pub records: Vec<FileRecord>,
     pub errors: Vec<String>,
+    pub cache_hits: usize,
+    pub cache_misses: usize,
 }
 
 /// Phase 1: walk folders, hash files in parallel, populate cache.
@@ -152,11 +154,23 @@ pub fn run_phase1(
         }
     }
 
+    let hits = cached_count.load(Ordering::Relaxed);
+    let misses = new_records.len();
+    println!(
+        "[cache] hits={} misses={} total={} hit_rate={:.1}%",
+        hits,
+        misses,
+        hits + misses,
+        if hits + misses > 0 { hits as f64 / (hits + misses) as f64 * 100.0 } else { 0.0 }
+    );
+
     ScanResult {
         records,
         errors: Arc::try_unwrap(errors)
             .unwrap_or_else(|arc| Mutex::new(arc.lock().unwrap().clone()))
             .into_inner()
             .unwrap(),
+        cache_hits: hits,
+        cache_misses: misses,
     }
 }

@@ -183,23 +183,42 @@ function renderFolderList() {
 
 function renderPriorityList() {
   const ul = document.getElementById('priority-list')!;
+  const grip = `<svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" style="display:block">
+    <circle cx="3" cy="3" r="1.2"/><circle cx="7" cy="3" r="1.2"/>
+    <circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/>
+    <circle cx="3" cy="11" r="1.2"/><circle cx="7" cy="11" r="1.2"/>
+  </svg>`;
+
   ul.innerHTML = priorities.map((f, i) => `
-    <li draggable="true" data-idx="${i}"
-        style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:#222;border-radius:4px;font-size:11px;cursor:grab">
+    <li data-idx="${i}"
+        style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:#222;border-radius:4px;font-size:11px;user-select:none">
+      <span class="drag-handle" style="cursor:grab;display:flex;align-items:center;color:#555;flex-shrink:0;touch-action:none">${grip}</span>
       <span style="color:#666;margin-right:4px">${i + 1}.</span>
       <span class="mono" style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${f}">${f}</span>
     </li>
   `).join('');
 
-  let dragSrc = -1;
-  ul.querySelectorAll('li').forEach(li => {
-    li.addEventListener('dragstart', () => { dragSrc = parseInt(li.dataset.idx!); });
-    li.addEventListener('dragover', e => { e.preventDefault(); });
-    li.addEventListener('drop', () => {
-      const dest = parseInt(li.dataset.idx!);
-      if (dragSrc !== dest) {
-        const [item] = priorities.splice(dragSrc, 1);
-        priorities.splice(dest, 0, item);
+  let srcIdx = -1;
+  ul.querySelectorAll<HTMLElement>('.drag-handle').forEach(handle => {
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const li = handle.closest('li') as HTMLElement;
+      srcIdx = parseInt(li.dataset.idx!);
+      handle.setPointerCapture(e.pointerId);
+      li.style.opacity = '0.5';
+    });
+
+    handle.addEventListener('pointerup', (e) => {
+      if (srcIdx === -1) return;
+      const saved = srcIdx;
+      srcIdx = -1;
+      ul.querySelectorAll<HTMLElement>('li').forEach(l => { l.style.opacity = ''; });
+      const overEl = document.elementFromPoint(e.clientX, e.clientY);
+      const overLi = overEl?.closest('li[data-idx]') as HTMLElement | null;
+      const destIdx = overLi ? parseInt(overLi.dataset.idx!) : saved;
+      if (destIdx !== saved) {
+        const [item] = priorities.splice(saved, 1);
+        priorities.splice(destIdx, 0, item);
         persistFolders();
         renderPriorityList();
       }

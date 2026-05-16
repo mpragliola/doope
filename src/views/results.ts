@@ -12,6 +12,8 @@ let resultsPriorities: string[] = [];
 let resultsKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 type SortMode = 'default' | 'files-desc' | 'files-asc' | 'size-desc' | 'size-asc';
 let sortMode: SortMode = 'default';
+let fileIndex = new Map<string, FileInfo>();
+let selectedLi: HTMLElement | null = null;
 
 export function renderResults(el: HTMLElement) {
   el.innerHTML = `
@@ -67,13 +69,47 @@ export function renderResults(el: HTMLElement) {
 }
 
 function reapplyGroupSelection() {
-  document.querySelectorAll('#group-list li[data-id]').forEach(li => {
-    (li as HTMLElement).style.removeProperty('background');
-  });
+  if (selectedLi) selectedLi.style.removeProperty('background');
+  selectedLi = null;
   if (selectedGroupId) {
     const li = document.querySelector(`#group-list li[data-id="${selectedGroupId}"]`) as HTMLElement | null;
-    if (li) li.style.background = '#1e2a3a';
+    if (li) { li.style.background = '#1e2a3a'; selectedLi = li; }
   }
+}
+
+function buildFileIndex() {
+  fileIndex.clear();
+  for (const g of groups) {
+    for (const f of g.files) fileIndex.set(f.path, f);
+  }
+}
+
+function updateGroupListItem(group: DuplicateGroup) {
+  const li = document.querySelector(`#group-list li[data-id="${group.id}"]`) as HTMLElement | null;
+  if (!li) return;
+  const survivors = group.files.filter(f => !marked.has(f.path)).length;
+  const markedCount = group.files.length - survivors;
+  const noSurvivors = survivors === 0 && markedCount > 0;
+  const borderColor = noSurvivors ? '#ef4444' : markedCount > 0 ? '#f59e0b' : 'transparent';
+  li.style.borderLeftColor = borderColor;
+  li.querySelectorAll<HTMLElement>('.group-path-span').forEach((span, i) => {
+    const f = group.files[i];
+    if (!f) return;
+    span.style.color = markedCount > 0 ? (marked.has(f.path) ? '#f87171' : '#4ade80') : '#555';
+  });
+  const existing = li.querySelector<HTMLElement>('.survivor-line');
+  if (markedCount > 0) {
+    const text = `${markedCount} marked → ${survivors} survive${noSurvivors ? ' ⚠' : ''}`;
+    const color = noSurvivors ? '#ef4444' : '#888';
+    if (existing) { existing.style.color = color; existing.textContent = text; }
+    else {
+      const div = document.createElement('div');
+      div.className = 'survivor-line';
+      div.style.cssText = `font-size:10px;color:${color};margin-top:2px`;
+      div.textContent = text;
+      li.appendChild(div);
+    }
+  } else { existing?.remove(); }
 }
 
 function wireControlsBar() {
@@ -89,6 +125,7 @@ function wireControlsBar() {
       await api.regroup(currentThreshold);
       const prevSelected = selectedGroupId;
       groups = await api.getDuplicateGroups();
+      buildFileIndex();
       marked.clear();
       selectedGroupId = null;
       renderGroupList();
@@ -160,6 +197,8 @@ export async function loadResults() {
   groups = await api.getDuplicateGroups();
   marked.clear();
   selectedGroupId = null;
+  selectedLi = null;
+  buildFileIndex();
 
   // Sync threshold slider to last scan's setting
   currentThreshold = lastPhashThreshold;
@@ -238,6 +277,7 @@ function sortedGroups(): DuplicateGroup[] {
 }
 
 function renderGroupList() {
+  selectedLi = null;
   const ul = document.getElementById('group-list')!;
   const summary = document.getElementById('lbl-summary')!;
 
@@ -281,7 +321,7 @@ function renderGroupList() {
       : '';
 
     const survivorLine = markedCount > 0
-      ? `<div style="font-size:10px;color:${noSurvivors ? '#ef4444' : '#888'};margin-top:2px">
+      ? `<div class="survivor-line" style="font-size:10px;color:${noSurvivors ? '#ef4444' : '#888'};margin-top:2px">
            ${markedCount} marked → ${survivors} survive${noSurvivors ? ' ⚠' : ''}
          </div>`
       : '';
@@ -298,7 +338,7 @@ function renderGroupList() {
           ${g.files.map(f => {
             const isMarked = marked.has(f.path);
             const pathColor = markedCount > 0 ? (isMarked ? '#f87171' : '#4ade80') : '#555';
-            return `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${pathColor}" title="${escapeAttr(f.path)}">${escapeAttr(shortPath(f.path))}</span>`;
+            return `<span class="group-path-span" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${pathColor}" title="${escapeAttr(f.path)}">${escapeAttr(shortPath(f.path))}</span>`;
           }).join('')}
         </div>
         ${survivorLine}
@@ -307,10 +347,13 @@ function renderGroupList() {
   }).join('');
 
   ul.querySelectorAll('li[data-id]').forEach(li => {
+    const id = (li as HTMLElement).dataset.id!;
     li.addEventListener('click', () => {
-      selectedGroupId = (li as HTMLElement).dataset.id!;
-      reapplyGroupSelection();
-      const group = groups.find(g => g.id === selectedGroupId);
+      selectedGroupId = id;
+      if (selectedLi) selectedLi.style.removeProperty('background');
+      (li as HTMLElement).style.background = '#1e2a3a';
+      selectedLi = li as HTMLElement;
+      const group = groups.find(g => g.id === id);
       if (group) renderGroupDetail(group);
     });
   });
@@ -349,13 +392,13 @@ function renderGroupDetail(group: DuplicateGroup) {
   el.querySelector('[data-action=keep-all]')!.addEventListener('click', () => {
     group.files.forEach(f => marked.delete(f.path));
     renderComparisonPanel(group);
-    renderGroupList();
+    updateGroupListItem(group);
     updateBottomBar();
   });
   el.querySelector('[data-action=delete-all]')!.addEventListener('click', () => {
     group.files.forEach(f => marked.add(f.path));
     renderComparisonPanel(group);
-    renderGroupList();
+    updateGroupListItem(group);
     updateBottomBar();
   });
 
@@ -416,7 +459,7 @@ function renderComparisonPanel(group: DuplicateGroup) {
       e.stopPropagation();
       marked.delete(path);
       renderComparisonPanel(group);
-      renderGroupList();
+      updateGroupListItem(group);
       updateBottomBar();
     });
 
@@ -428,7 +471,7 @@ function renderComparisonPanel(group: DuplicateGroup) {
       } else {
         marked.add(path);
         renderComparisonPanel(group);
-        renderGroupList();
+        updateGroupListItem(group);
         updateBottomBar();
       }
     });
@@ -440,7 +483,7 @@ async function autoMark(group: DuplicateGroup) {
     const toMark = await api.autoMarkGroup(group.id);
     toMark.forEach(p => marked.add(p));
     renderComparisonPanel(group);
-    renderGroupList();
+    updateGroupListItem(group);
     updateBottomBar();
   } catch (e) {
     showToast(String(e));
@@ -531,7 +574,7 @@ function showLastCopyWarning(cell: HTMLElement, path: string, group: DuplicateGr
     warning.remove();
     marked.add(path);
     renderComparisonPanel(group);
-    renderGroupList();
+    updateGroupListItem(group);
     updateBottomBar();
   });
 
@@ -565,13 +608,13 @@ function registerResultsKeys() {
         e.preventDefault();
         group.files.forEach(f => marked.delete(f.path));
         renderComparisonPanel(group);
-        renderGroupList();
+        updateGroupListItem(group);
         updateBottomBar();
       } else if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
         group.files.forEach(f => marked.add(f.path));
         renderComparisonPanel(group);
-        renderGroupList();
+        updateGroupListItem(group);
         updateBottomBar();
       } else {
         const n = parseInt(e.key);
@@ -582,7 +625,7 @@ function registerResultsKeys() {
             else marked.add(f.path);
           });
           renderComparisonPanel(group);
-          renderGroupList();
+          updateGroupListItem(group);
           updateBottomBar();
         }
       }
@@ -605,15 +648,12 @@ function updateBottomBar() {
   const anyUnsafe = groups.some(g => g.files.every(f => marked.has(f.path)));
   deleteBtn.disabled = marked.size === 0;
 
-  const totalBytes = [...marked].reduce((sum, path) => {
-    const file = groups.flatMap(g => g.files).find((f: FileInfo) => f.path === path);
-    return sum + (file?.size ?? 0);
-  }, 0);
+  const totalBytes = [...marked].reduce((sum, path) => sum + (fileIndex.get(path)?.size ?? 0), 0);
 
   if (marked.size === 0) {
     spaceLabel.textContent = 'No files marked for deletion';
   } else if (anyUnsafe) {
-    spaceLabel.textContent = '⚠ One group has no survivors — adjust marking';
+    spaceLabel.textContent = `⚠ ${marked.size} file${marked.size !== 1 ? 's' : ''} marked — some groups fully deleted (${(totalBytes / 1_048_576).toFixed(1)} MB)`;
   } else {
     spaceLabel.textContent = `${marked.size} file${marked.size !== 1 ? 's' : ''} marked — ${(totalBytes / 1_048_576).toFixed(1)} MB to free`;
   }
@@ -634,6 +674,8 @@ async function confirmDelete() {
     marked.clear();
     showToast(`Deleted ${count} file${count !== 1 ? 's' : ''}`, 'success');
     groups = await api.getDuplicateGroups();
+    buildFileIndex();
+    selectedLi = null;
     const nextGroup = groups[prevIndex] ?? groups[prevIndex - 1] ?? null;
     selectedGroupId = nextGroup?.id ?? null;
     renderGroupList();
