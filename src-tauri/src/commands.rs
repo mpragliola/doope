@@ -305,6 +305,8 @@ mod tests {
                     path: path.to_string(),
                     size,
                     media_type: MediaType::Image,
+                    width: None,
+                    height: None,
                 })
                 .collect(),
             duplicate_type: DuplicateType::Perceptual,

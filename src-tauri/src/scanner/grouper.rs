@@ -2,7 +2,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::models::{DuplicateGroup, DuplicateType, FileInfo, FileRecord, ScanMode};
+use crate::models::{DuplicateGroup, DuplicateType, FileInfo, FileRecord, MediaType, ScanMode};
 use crate::scanner::bktree::BkTree;
 use crate::scanner::hasher::{hamming_distance, hamming_distance_multi};
 
@@ -207,10 +207,21 @@ fn make_group(members: Vec<&FileRecord>, dup_type: DuplicateType, max_distance: 
         id: Uuid::new_v4().to_string(),
         files: members
             .into_iter()
-            .map(|r| FileInfo {
-                path: r.path.clone(),
-                size: r.size,
-                media_type: r.media_type.clone(),
+            .map(|r| {
+                let (width, height) = if r.media_type == MediaType::Image {
+                    image::image_dimensions(&r.path)
+                        .map(|(w, h)| (Some(w), Some(h)))
+                        .unwrap_or((None, None))
+                } else {
+                    (None, None)
+                };
+                FileInfo {
+                    path: r.path.clone(),
+                    size: r.size,
+                    media_type: r.media_type.clone(),
+                    width,
+                    height,
+                }
             })
             .collect(),
         duplicate_type: dup_type,
