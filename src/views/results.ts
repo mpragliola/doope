@@ -7,6 +7,8 @@ import type { DuplicateGroup, FileInfo } from '../types';
 let groups: DuplicateGroup[] = [];
 let marked = new Set<string>();
 let selectedGroupId: string | null = null;
+let selectedGroupIds = new Set<string>();
+let lastClickedSortedIndex = -1;
 let currentThreshold = 8;
 let resultsPriorities: string[] = [];
 let resultsKeyHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -55,7 +57,8 @@ export function renderResults(el: HTMLElement) {
   `;
 
   el.querySelector('#btn-back')!.addEventListener('click', () => {
-    groups = []; marked.clear(); selectedGroupId = null; sortMode = 'default';
+    groups = []; marked.clear(); selectedGroupId = null; selectedGroupIds.clear();
+    lastClickedSortedIndex = -1; sortMode = 'default';
     unregisterResultsKeys();
     navigate('scan-config');
   });
@@ -68,12 +71,15 @@ export function renderResults(el: HTMLElement) {
 
 function reapplyGroupSelection() {
   document.querySelectorAll('#group-list li[data-id]').forEach(li => {
-    (li as HTMLElement).style.removeProperty('background');
+    const id = (li as HTMLElement).dataset.id!;
+    if (id === selectedGroupId) {
+      (li as HTMLElement).style.background = '#1e2a3a';
+    } else if (selectedGroupIds.has(id)) {
+      (li as HTMLElement).style.background = '#131a25';
+    } else {
+      (li as HTMLElement).style.removeProperty('background');
+    }
   });
-  if (selectedGroupId) {
-    const li = document.querySelector(`#group-list li[data-id="${selectedGroupId}"]`) as HTMLElement | null;
-    if (li) li.style.background = '#1e2a3a';
-  }
 }
 
 function wireControlsBar() {
@@ -91,12 +97,15 @@ function wireControlsBar() {
       groups = await api.getDuplicateGroups();
       marked.clear();
       selectedGroupId = null;
+      selectedGroupIds.clear();
+      lastClickedSortedIndex = -1;
       renderGroupList();
       updateBottomBar();
       if (prevSelected) {
         const g = groups.find(g => g.id === prevSelected);
         if (g) {
           selectedGroupId = g.id;
+          selectedGroupIds.add(g.id);
           reapplyGroupSelection();
           renderGroupDetail(g);
         }
@@ -160,6 +169,8 @@ export async function loadResults() {
   groups = await api.getDuplicateGroups();
   marked.clear();
   selectedGroupId = null;
+  selectedGroupIds.clear();
+  lastClickedSortedIndex = -1;
 
   // Sync threshold slider to last scan's setting
   currentThreshold = lastPhashThreshold;
@@ -306,9 +317,37 @@ function renderGroupList() {
     `;
   }).join('');
 
+  const sorted = sortedGroups();
   ul.querySelectorAll('li[data-id]').forEach(li => {
-    li.addEventListener('click', () => {
-      selectedGroupId = (li as HTMLElement).dataset.id!;
+    li.addEventListener('click', (e) => {
+      const me = e as MouseEvent;
+      const clickedId = (li as HTMLElement).dataset.id!;
+      const clickedIdx = sorted.findIndex(g => g.id === clickedId);
+
+      if (me.shiftKey && lastClickedSortedIndex !== -1) {
+        const lo = Math.min(lastClickedSortedIndex, clickedIdx);
+        const hi = Math.max(lastClickedSortedIndex, clickedIdx);
+        for (let i = lo; i <= hi; i++) selectedGroupIds.add(sorted[i].id);
+      } else if (me.ctrlKey || me.metaKey) {
+        if (selectedGroupIds.has(clickedId)) {
+          selectedGroupIds.delete(clickedId);
+          if (selectedGroupId === clickedId) {
+            const remaining = [...selectedGroupIds];
+            selectedGroupId = remaining.length > 0 ? remaining[remaining.length - 1] : null;
+          }
+        } else {
+          selectedGroupIds.add(clickedId);
+        }
+      } else {
+        selectedGroupIds.clear();
+        selectedGroupIds.add(clickedId);
+      }
+
+      if (selectedGroupIds.has(clickedId)) {
+        selectedGroupId = clickedId;
+        lastClickedSortedIndex = clickedIdx;
+      }
+
       reapplyGroupSelection();
       const group = groups.find(g => g.id === selectedGroupId);
       if (group) renderGroupDetail(group);
@@ -332,28 +371,38 @@ function renderGroupDetail(group: DuplicateGroup) {
     headerLabel = 'Filename match';
   }
 
+  const multiCount = selectedGroupIds.size;
+  const bulkBtn = multiCount > 1
+    ? `<button class="ghost" data-action="auto-mark-all" style="font-size:12px;padding:5px 10px;color:#93c5fd;border-color:#1e3a5f">Auto-mark ${multiCount} selected <kbd style="font-size:10px;opacity:0.6">A</kbd></button>`
+    : '';
+
   el.innerHTML = `
     <div style="padding:10px 14px;border-bottom:1px solid #1e1e1e;display:flex;gap:8px;align-items:center;flex-shrink:0">
       <div style="flex:1;overflow:hidden">
         <span style="font-size:13px;font-weight:500">${group.files.length} files</span>
         <span style="font-size:11px;color:#666;margin-left:8px">${headerLabel}</span>
+        ${multiCount > 1 ? `<span style="font-size:11px;color:#60a5fa;margin-left:8px">${multiCount} groups selected</span>` : ''}
       </div>
-      <button class="ghost" data-action="auto-mark" style="font-size:12px;padding:5px 10px">Auto-mark <kbd style="font-size:10px;opacity:0.6">A</kbd></button>
+      ${bulkBtn}
+      <button class="ghost" data-action="auto-mark" style="font-size:12px;padding:5px 10px">Auto-mark${multiCount > 1 ? ' this' : ' <kbd style="font-size:10px;opacity:0.6">A</kbd>'}</button>
       <button class="ghost" data-action="keep-all" style="font-size:12px;padding:5px 10px">Keep all <kbd style="font-size:10px;opacity:0.6">K</kbd></button>
       <button class="ghost" data-action="delete-all" style="font-size:12px;padding:5px 10px;color:#fca5a5">Mark all <kbd style="font-size:10px;opacity:0.7">M</kbd></button>
     </div>
     <div id="file-grid" style="flex:1;display:flex;flex-direction:row;overflow-x:auto;gap:3px;padding:4px;background:#0d0d0d;min-height:0"></div>
   `;
 
+  el.querySelector('[data-action=auto-mark-all]')?.addEventListener('click', () => autoMarkSelected());
   el.querySelector('[data-action=auto-mark]')!.addEventListener('click', () => autoMark(group));
   el.querySelector('[data-action=keep-all]')!.addEventListener('click', () => {
-    group.files.forEach(f => marked.delete(f.path));
+    const targetIds = selectedGroupIds.size > 1 ? selectedGroupIds : new Set([group.id]);
+    groups.filter(g => targetIds.has(g.id)).forEach(g => g.files.forEach(f => marked.delete(f.path)));
     renderComparisonPanel(group);
     renderGroupList();
     updateBottomBar();
   });
   el.querySelector('[data-action=delete-all]')!.addEventListener('click', () => {
-    group.files.forEach(f => marked.add(f.path));
+    const targetIds = selectedGroupIds.size > 1 ? selectedGroupIds : new Set([group.id]);
+    groups.filter(g => targetIds.has(g.id)).forEach(g => g.files.forEach(f => marked.add(f.path)));
     renderComparisonPanel(group);
     renderGroupList();
     updateBottomBar();
@@ -440,6 +489,21 @@ async function autoMark(group: DuplicateGroup) {
     const toMark = await api.autoMarkGroup(group.id);
     toMark.forEach(p => marked.add(p));
     renderComparisonPanel(group);
+    renderGroupList();
+    updateBottomBar();
+  } catch (e) {
+    showToast(String(e));
+  }
+}
+
+async function autoMarkSelected() {
+  try {
+    for (const id of selectedGroupIds) {
+      const toMark = await api.autoMarkGroup(id);
+      toMark.forEach(p => marked.add(p));
+    }
+    const previewGroup = groups.find(g => g.id === selectedGroupId);
+    if (previewGroup) renderComparisonPanel(previewGroup);
     renderGroupList();
     updateBottomBar();
   } catch (e) {
@@ -558,22 +622,26 @@ function registerResultsKeys() {
     } else if (selectedGroupId) {
       const group = groups.find(g => g.id === selectedGroupId);
       if (!group) return;
+      const isMulti = selectedGroupIds.size > 1;
       if (e.key === 'a' || e.key === 'A') {
         e.preventDefault();
-        autoMark(group);
+        if (isMulti) autoMarkSelected();
+        else autoMark(group);
       } else if (e.key === 'k' || e.key === 'K') {
         e.preventDefault();
-        group.files.forEach(f => marked.delete(f.path));
+        const targets = isMulti ? groups.filter(g => selectedGroupIds.has(g.id)) : [group];
+        targets.forEach(g => g.files.forEach(f => marked.delete(f.path)));
         renderComparisonPanel(group);
         renderGroupList();
         updateBottomBar();
       } else if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
-        group.files.forEach(f => marked.add(f.path));
+        const targets = isMulti ? groups.filter(g => selectedGroupIds.has(g.id)) : [group];
+        targets.forEach(g => g.files.forEach(f => marked.add(f.path)));
         renderComparisonPanel(group);
         renderGroupList();
         updateBottomBar();
-      } else {
+      } else if (!isMulti) {
         const n = parseInt(e.key);
         if (!isNaN(n) && n >= 1 && n <= group.files.length) {
           e.preventDefault();
@@ -636,6 +704,9 @@ async function confirmDelete() {
     groups = await api.getDuplicateGroups();
     const nextGroup = groups[prevIndex] ?? groups[prevIndex - 1] ?? null;
     selectedGroupId = nextGroup?.id ?? null;
+    selectedGroupIds.clear();
+    lastClickedSortedIndex = -1;
+    if (nextGroup) selectedGroupIds.add(nextGroup.id);
     renderGroupList();
     if (nextGroup) renderGroupDetail(nextGroup);
     updateBottomBar();
