@@ -187,7 +187,7 @@ fn select_keeper<'a>(
                 .iter()
                 .position(|p| f.path.starts_with(p.as_str()))
                 .unwrap_or(usize::MAX);
-            (area, usize::MAX - prio_rank)
+            (area, usize::MAX.saturating_sub(prio_rank))
         }),
     }
 }
@@ -198,20 +198,21 @@ pub async fn auto_mark_group(
     mode: AutoMarkMode,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    let groups = state.groups.lock().unwrap();
-    let priorities = state.folder_priorities.lock().unwrap();
+    let (files, priorities) = {
+        let groups = state.groups.lock().unwrap();
+        let priorities = state.folder_priorities.lock().unwrap();
+        let group = groups
+            .iter()
+            .find(|g| g.id == group_id)
+            .ok_or_else(|| format!("group {} not found", group_id))?;
+        (group.files.clone(), priorities.clone())
+    };
 
-    let group = groups
-        .iter()
-        .find(|g| g.id == group_id)
-        .ok_or_else(|| format!("group {} not found", group_id))?;
-
-    let keeper_path = select_keeper(&group.files, &priorities, &mode)
+    let keeper_path = select_keeper(&files, &priorities, &mode)
         .map(|f| f.path.clone())
         .unwrap_or_default();
 
-    let marked: Vec<String> = group
-        .files
+    let marked: Vec<String> = files
         .iter()
         .filter(|f| f.path != keeper_path)
         .map(|f| f.path.clone())
