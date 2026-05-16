@@ -40,10 +40,10 @@ export function renderScanConfig(el: HTMLElement) {
       <button class="ghost" id="btn-clear-cache">Clear Cache</button>
     </div>
     <div style="display:flex;flex:1;overflow:hidden">
-      <div style="width:340px;display:flex;flex-direction:column;border-right:1px solid #2a2a2a;padding:16px;gap:12px">
+      <div id="folder-panel" style="width:340px;display:flex;flex-direction:column;border-right:1px solid #2a2a2a;padding:16px;gap:12px;transition:background 0.1s">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="flex:1;font-weight:600">Folders</span>
-          <span style="font-size:11px;color:#555">drag to set priority</span>
+          <span style="font-size:11px;color:#555">drag to reorder · drop to add</span>
           <button class="ghost" id="btn-add-folder" style="padding:5px 12px;font-size:12px">+ Add</button>
         </div>
         <ul id="folder-list" class="scroll-list" style="list-style:none;gap:4px;display:flex;flex-direction:column"></ul>
@@ -129,6 +129,51 @@ function wireEvents(el: HTMLElement) {
   const slider = el.querySelector<HTMLInputElement>('#slider-threshold')!;
   const lbl = el.querySelector<HTMLElement>('#lbl-threshold')!;
   slider.addEventListener('input', () => { lbl.textContent = slider.value; });
+
+  wireFolderPanelDrop(el.querySelector<HTMLElement>('#folder-panel')!);
+}
+
+function wireFolderPanelDrop(panel: HTMLElement) {
+  const isFileDrop = (e: DragEvent) => e.dataTransfer?.types.includes('Files') ?? false;
+
+  panel.addEventListener('dragover', (e) => {
+    if (!isFileDrop(e)) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = 'copy';
+    panel.style.background = 'rgba(59,130,246,0.07)';
+    panel.style.borderRight = '1px solid #3b82f6';
+  });
+
+  panel.addEventListener('dragleave', (e) => {
+    if (!isFileDrop(e)) return;
+    if (!panel.contains(e.relatedTarget as Node)) {
+      panel.style.removeProperty('background');
+      panel.style.borderRight = '1px solid #2a2a2a';
+    }
+  });
+
+  panel.addEventListener('drop', (e) => {
+    if (!isFileDrop(e)) return;
+    e.preventDefault();
+    panel.style.removeProperty('background');
+    panel.style.borderRight = '1px solid #2a2a2a';
+
+    const added: string[] = [];
+    for (const item of Array.from(e.dataTransfer!.items)) {
+      const entry = item.webkitGetAsEntry?.();
+      if (!entry?.isDirectory) continue;
+      const path: string | undefined = (item.getAsFile() as any)?.path;
+      if (path && !folders.includes(path)) {
+        folders.push(path);
+        added.push(path);
+      }
+    }
+    if (added.length) {
+      persistFolders();
+      renderFolderList();
+      updateStartButton();
+    }
+  });
 }
 
 async function addFolder() {
