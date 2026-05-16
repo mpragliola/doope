@@ -74,13 +74,17 @@ pub fn run_phase1(
                 if cached.size == found.size && cached.mtime == found.mtime {
                     let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
                     let nc = cached_count.fetch_add(1, Ordering::Relaxed) + 1;
-                    progress_cb(ProgressEvent {
-                        current: n,
-                        total,
-                        path: path_str.clone(),
-                        phase: Phase::Hashing,
-                        cached: Some(nc),
-                    });
+                    // Cache hits are near-instant; emitting every file floods the IPC queue.
+                    // Emit every 200 to keep the UI responsive without backlog buildup.
+                    if n % 200 == 0 || n == total {
+                        progress_cb(ProgressEvent {
+                            current: n,
+                            total,
+                            path: path_str.clone(),
+                            phase: Phase::Hashing,
+                            cached: Some(nc),
+                        });
+                    }
                     return Some(Outcome::Cached(cached.clone()));
                 }
             }
