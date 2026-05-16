@@ -136,7 +136,7 @@ impl Cache {
         if paths.is_empty() {
             return Ok(result);
         }
-        for chunk in paths.chunks(500) {
+        for chunk in paths.chunks(900) {
             let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
             let sql = format!(
                 "SELECT path, size, mtime, exact_hash, phash, media_type \
