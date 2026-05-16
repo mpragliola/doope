@@ -78,15 +78,33 @@ export function renderProgress(el: HTMLElement) {
 
 const eta = makeEtaTracker();
 
+const EXT_PALETTE = [
+  '#60a5fa', '#34d399', '#fbbf24', '#f87171', '#a78bfa',
+  '#f472b6', '#22d3ee', '#a3e635', '#fb923c', '#818cf8',
+  '#2dd4bf', '#e879f9', '#facc15', '#4ade80', '#f43f5e',
+  '#38bdf8',
+];
+const extColorMap = new Map<string, string>();
+let extColorIdx = 0;
+
+function extColor(e: string): string {
+  if (!extColorMap.has(e)) {
+    extColorMap.set(e, EXT_PALETTE[extColorIdx % EXT_PALETTE.length]);
+    extColorIdx++;
+  }
+  return extColorMap.get(e)!;
+}
+
 function renderExtBadges() {
   const el = document.getElementById('ext-badges');
   if (!el) return;
   const sorted = [...extCounts.entries()].sort((a, b) => b[1] - a[1]);
-  el.innerHTML = sorted.map(([ext, count]) =>
-    `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px;font-size:10px;border:1px solid #2a2a2a;border-radius:4px;background:#1a1a1a;color:#888">
-      ${ext} <span style="color:#aaa">${count}</span>
-    </span>`
-  ).join('');
+  el.innerHTML = sorted.map(([ext, count]) => {
+    const color = extColor(ext);
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10px;border:1px solid ${color};border-radius:10px;background:#1a1a1a;color:${color}">
+      ${ext} <span style="color:#888">${count}</span>
+    </span>`;
+  }).join('');
 }
 
 export async function activateProgress() {
@@ -103,18 +121,25 @@ export async function activateProgress() {
   etaLabel.textContent = '';
   eta.reset();
   extCounts.clear();
+  extColorMap.clear();
+  extColorIdx = 0;
   maxCached = 0;
   renderExtBadges();
 
   if (unlisten) { unlisten(); unlisten = null; }
 
-  unlisten = await api.onProgress((evt: ProgressEvent) => {
-    if (evt.phase === 'walking') {
-      phaseLabel.textContent = 'Scanning folders…';
-      countLabel.textContent = '';
-      currentPath.textContent = '';
-      etaLabel.textContent = '';
-    } else if (evt.phase === 'hashing') {
+  // Buffer the latest event and flush via rAF — caps DOM updates at 60fps regardless
+  // of how fast Rust fires events, preventing IPC backlog from stalling the UI.
+  let pending: ProgressEvent | null = null;
+  let rafId = 0;
+
+  function flush() {
+    rafId = 0;
+    const evt = pending;
+    if (!evt) return;
+    pending = null;
+
+    if (evt.phase === 'hashing') {
       const pct = evt.total > 0 ? (evt.current / evt.total) * 100 : 0;
       bar.style.width = `${pct}%`;
       phaseLabel.textContent = 'Hashing…';
@@ -122,9 +147,6 @@ export async function activateProgress() {
       const cachedStr = maxCached > 0 ? ` · ${maxCached.toLocaleString()} cached` : '';
       countLabel.textContent = `${evt.current.toLocaleString()} / ${evt.total.toLocaleString()}${cachedStr}`;
       currentPath.textContent = evt.path;
-      const dot = evt.path.lastIndexOf('.');
-      const ext = dot >= 0 ? evt.path.slice(dot).toLowerCase() : '(none)';
-      extCounts.set(ext, (extCounts.get(ext) ?? 0) + 1);
       renderExtBadges();
       eta.record(evt.current);
       const info = eta.compute(evt.current, evt.total);
@@ -135,11 +157,35 @@ export async function activateProgress() {
       countLabel.textContent = '';
       currentPath.textContent = '';
       etaLabel.textContent = '';
-    } else if (evt.phase === 'done') {
+    }
+  }
+
+  unlisten = await api.onProgress((evt: ProgressEvent) => {
+    if (evt.phase === 'walking') {
+      phaseLabel.textContent = 'Scanning folders…';
+      countLabel.textContent = '';
+      currentPath.textContent = '';
+      etaLabel.textContent = '';
+      return;
+    }
+
+    if (evt.phase === 'done') {
+      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
       if (unlisten) { unlisten(); unlisten = null; }
       navigate('results');
       window.dispatchEvent(new CustomEvent('scan-complete'));
+      return;
     }
+
+    // Accumulate extension counts on every event (cheap), but defer rendering.
+    if (evt.phase === 'hashing' && evt.path) {
+      const dot = evt.path.lastIndexOf('.');
+      const ext = dot >= 0 ? evt.path.slice(dot).toLowerCase() : '(none)';
+      extCounts.set(ext, (extCounts.get(ext) ?? 0) + 1);
+    }
+
+    pending = evt;
+    if (!rafId) rafId = requestAnimationFrame(flush);
   });
 }
 
