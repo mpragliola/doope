@@ -16,6 +16,9 @@ let sortMode: SortMode = 'default';
 let autoMarkMode: 'priority' | 'quality' = 'priority';
 let fileIndex = new Map<string, FileInfo>();
 let selectedLi: HTMLElement | null = null;
+let filterExt: string | null = null;
+let availableExts: string[] = [];
+let sidebarWidth = 280;
 
 export function renderResults(el: HTMLElement) {
   el.innerHTML = `
@@ -32,16 +35,21 @@ export function renderResults(el: HTMLElement) {
       <span id="regroup-status" style="font-size:12px;color:#666;display:none"></span>
     </div>
     <div style="display:flex;flex:1;overflow:hidden">
-      <div style="width:280px;display:flex;flex-direction:column;border-right:1px solid #2a2a2a">
-        <div style="padding:6px 12px;font-size:11px;color:#666;border-bottom:1px solid #1e1e1e;display:flex;align-items:center">
+      <div id="sidebar" style="width:${sidebarWidth}px;display:flex;flex-direction:column;border-right:1px solid #2a2a2a;flex-shrink:0">
+        <div style="padding:6px 12px;font-size:11px;color:#666;border-bottom:1px solid #1e1e1e;display:flex;align-items:center;gap:4px">
           <span style="flex:1">DUPLICATE GROUPS</span>
+          <div style="position:relative">
+            <button class="ghost" id="btn-ext-filter" style="font-size:11px;padding:3px 8px">Ext ▾</button>
+            <div id="ext-dropdown" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:#1e1e1e;border:1px solid #333;border-radius:4px;min-width:90px;padding:4px 0;max-height:200px;overflow-y:auto"></div>
+          </div>
           <div style="position:relative">
             <button class="ghost" id="btn-sort" style="font-size:11px;padding:3px 8px">Sort ▾</button>
             <div id="sort-dropdown" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:#1e1e1e;border:1px solid #333;border-radius:4px;min-width:110px;padding:4px 0"></div>
           </div>
         </div>
-        <ul id="group-list" class="scroll-list" style="list-style:none"></ul>
+        <ul id="group-list" class="scroll-list" style="list-style:none;user-select:none"></ul>
       </div>
+      <div id="resize-handle" style="width:5px;cursor:col-resize;flex-shrink:0;background:transparent;transition:background 0.12s"></div>
       <div id="group-detail" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
         <div style="flex:1;display:flex;align-items:center;justify-content:center;color:#555;font-size:14px">
           Select a group to inspect
@@ -56,7 +64,7 @@ export function renderResults(el: HTMLElement) {
 
   el.querySelector('#btn-back')!.addEventListener('click', () => {
     groups = []; marked.clear(); selectedGroupId = null; selectedGroupIds.clear();
-    lastClickedSortedIndex = -1; sortMode = 'default';
+    lastClickedSortedIndex = -1; sortMode = 'default'; filterExt = null;
     unregisterResultsKeys();
     navigate('scan-config');
   });
@@ -148,6 +156,10 @@ function wireControlsBar() {
       const prevSelected = selectedGroupId;
       groups = await api.getDuplicateGroups();
       buildFileIndex();
+      buildExtList();
+      filterExt = null;
+      const extBtn = document.getElementById('btn-ext-filter');
+      if (extBtn) extBtn.textContent = 'Ext ▾';
       marked.clear();
       selectedGroupId = null;
       selectedGroupIds.clear();
@@ -175,6 +187,8 @@ function wireControlsBar() {
   });
 
   wireSortDropdown();
+  wireExtFilter();
+  wireResizeHandle();
 }
 
 function wireSortDropdown() {
@@ -216,13 +230,90 @@ function wireSortDropdown() {
   document.addEventListener('click', () => { dropdown.style.display = 'none'; });
 }
 
+function wireExtFilter() {
+  const btn = document.getElementById('btn-ext-filter');
+  const dropdown = document.getElementById('ext-dropdown');
+  if (!btn || !dropdown) return;
+
+  function renderExtDropdown() {
+    type ExtOption = { label: string; value: string | null };
+    const items: ExtOption[] = [{ label: 'All', value: null }, ...availableExts.map(e => ({ label: e, value: e }))];
+    dropdown!.innerHTML = items.map(o => `
+      <div data-ext="${o.value ?? ''}" style="padding:5px 12px;cursor:pointer;font-size:11px;color:${filterExt === o.value ? '#e2e2e2' : '#888'};background:${filterExt === o.value ? '#2a2a2a' : 'transparent'}">
+        ${filterExt === o.value ? '✓ ' : ''}${o.label}
+      </div>
+    `).join('');
+    dropdown!.querySelectorAll<HTMLElement>('[data-ext]').forEach(el => {
+      el.addEventListener('click', () => {
+        const val = el.dataset.ext;
+        filterExt = val || null;
+        dropdown!.style.display = 'none';
+        btn!.textContent = filterExt ? `${filterExt} ▾` : 'Ext ▾';
+        renderGroupList();
+      });
+    });
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = dropdown.style.display !== 'none';
+    dropdown.style.display = open ? 'none' : 'block';
+    if (!open) renderExtDropdown();
+  });
+
+  document.addEventListener('click', () => { dropdown.style.display = 'none'; });
+}
+
+function wireResizeHandle() {
+  const handle = document.getElementById('resize-handle');
+  const sidebar = document.getElementById('sidebar');
+  if (!handle || !sidebar) return;
+
+  let dragging = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  handle.addEventListener('mouseenter', () => {
+    if (!dragging) handle.style.background = '#3b82f6';
+  });
+  handle.addEventListener('mouseleave', () => {
+    if (!dragging) handle.style.background = 'transparent';
+  });
+  handle.addEventListener('mousedown', (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startWidth = sidebar.offsetWidth;
+    handle.style.background = '#3b82f6';
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const newWidth = Math.min(600, Math.max(160, startWidth + e.clientX - startX));
+    sidebarWidth = newWidth;
+    sidebar.style.width = `${newWidth}px`;
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.style.background = 'transparent';
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+}
+
 export async function loadResults() {
   groups = await api.getDuplicateGroups();
   marked.clear();
   selectedGroupId = null;
   selectedGroupIds.clear();
   lastClickedSortedIndex = -1;
+  filterExt = null;
   buildFileIndex();
+  buildExtList();
+  const extBtn = document.getElementById('btn-ext-filter');
+  if (extBtn) extBtn.textContent = 'Ext ▾';
 
   // Sync threshold slider to last scan's setting
   currentThreshold = lastPhashThreshold;
@@ -237,8 +328,22 @@ export async function loadResults() {
   updateBottomBar();
 }
 
-function sortedGroups(): DuplicateGroup[] {
-  const copy = [...groups];
+function ext(path: string): string {
+  const name = path.split(/[\\/]/).pop() ?? '';
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 ? name.slice(dot).toLowerCase() : '';
+}
+
+function buildExtList() {
+  const s = new Set<string>();
+  for (const g of groups) for (const f of g.files) { const e = ext(f.path); if (e) s.add(e); }
+  availableExts = [...s].sort();
+}
+
+function filteredSortedGroups(): DuplicateGroup[] {
+  let base = groups;
+  if (filterExt !== null) base = base.filter(g => g.files.every(f => ext(f.path) === filterExt));
+  const copy = [...base];
   if (sortMode === 'files-desc') copy.sort((a, b) => b.files.length - a.files.length);
   else if (sortMode === 'files-asc') copy.sort((a, b) => a.files.length - b.files.length);
   else if (sortMode === 'size-desc') copy.sort((a, b) => b.wasted_bytes - a.wasted_bytes);
@@ -250,12 +355,17 @@ function renderGroupList() {
   selectedLi = null;
   const ul = document.getElementById('group-list')!;
   const summary = document.getElementById('lbl-summary')!;
+  const visible = filteredSortedGroups();
 
-  summary.textContent = groups.length === 0
-    ? 'No duplicates found'
-    : `${groups.length} group${groups.length !== 1 ? 's' : ''} found`;
+  if (groups.length === 0) {
+    summary.textContent = 'No duplicates found';
+  } else if (filterExt) {
+    summary.textContent = `${visible.length} of ${groups.length} group${groups.length !== 1 ? 's' : ''}`;
+  } else {
+    summary.textContent = `${groups.length} group${groups.length !== 1 ? 's' : ''} found`;
+  }
 
-  ul.innerHTML = sortedGroups().map(g => {
+  ul.innerHTML = visible.map(g => {
     const wastedMb = (g.wasted_bytes / 1_048_576).toFixed(1);
 
     // Extended badge: ≈ = perceptual-identical (dist 0), ~ = perceptual-similar, = exact, F filename
@@ -316,17 +426,16 @@ function renderGroupList() {
     `;
   }).join('');
 
-  const sorted = sortedGroups();
   ul.querySelectorAll('li[data-id]').forEach(li => {
     li.addEventListener('click', (e) => {
       const me = e as MouseEvent;
       const clickedId = (li as HTMLElement).dataset.id!;
-      const clickedIdx = sorted.findIndex(g => g.id === clickedId);
+      const clickedIdx = visible.findIndex(g => g.id === clickedId);
 
       if (me.shiftKey && lastClickedSortedIndex !== -1) {
         const lo = Math.min(lastClickedSortedIndex, clickedIdx);
         const hi = Math.max(lastClickedSortedIndex, clickedIdx);
-        for (let i = lo; i <= hi; i++) selectedGroupIds.add(sorted[i].id);
+        for (let i = lo; i <= hi; i++) selectedGroupIds.add(visible[i].id);
       } else if (me.ctrlKey || me.metaKey) {
         if (selectedGroupIds.has(clickedId)) {
           selectedGroupIds.delete(clickedId);
