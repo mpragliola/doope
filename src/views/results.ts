@@ -12,6 +12,7 @@ let resultsPriorities: string[] = [];
 let resultsKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 type SortMode = 'default' | 'files-desc' | 'files-asc' | 'size-desc' | 'size-asc';
 let sortMode: SortMode = 'default';
+let autoMarkMode: 'priority' | 'quality' = 'priority';
 let fileIndex = new Map<string, FileInfo>();
 let selectedLi: HTMLElement | null = null;
 
@@ -27,6 +28,7 @@ export function renderResults(el: HTMLElement) {
       <input type="range" id="results-threshold" min="0" max="20" value="8" style="width:110px;padding:0">
       <span id="results-threshold-lbl" style="font-size:12px;min-width:18px;color:#e2e2e2">8</span>
       <button class="ghost" id="btn-regroup" style="font-size:12px;padding:5px 10px">Re-group <kbd style="font-size:10px;opacity:0.6">R</kbd></button>
+      <span id="regroup-status" style="font-size:12px;color:#666;display:none"></span>
       <button class="ghost" id="btn-toggle-priority" style="font-size:12px;padding:5px 10px;margin-left:auto">Priority ▾</button>
     </div>
     <div id="priority-panel" style="display:none;padding:8px 16px;background:#131313;border-bottom:1px solid #2a2a2a;flex-shrink:0">
@@ -120,8 +122,27 @@ function wireControlsBar() {
     lbl.textContent = slider.value;
   });
 
-  document.getElementById('btn-regroup')!.addEventListener('click', async () => {
+  const regroupBtn = document.getElementById('btn-regroup') as HTMLButtonElement;
+  regroupBtn.addEventListener('click', async () => {
+    if (regroupBtn.disabled) return;
+
+    const status = document.getElementById('regroup-status') as HTMLElement;
+    const originalLabel = regroupBtn.innerHTML;
+    regroupBtn.disabled = true;
+    regroupBtn.textContent = 'Re-grouping…';
+    status.style.display = 'inline';
+
+    const phaseLabels: Record<string, string> = {
+      filename: 'filename…',
+      exact: 'exact hash…',
+      perceptual: 'perceptual…',
+    };
+
+    let unlisten: (() => void) | null = null;
     try {
+      unlisten = await api.onRegroupProgress((phase) => {
+        status.textContent = phaseLabels[phase] ?? phase;
+      });
       await api.regroup(currentThreshold);
       const prevSelected = selectedGroupId;
       groups = await api.getDuplicateGroups();
@@ -140,6 +161,12 @@ function wireControlsBar() {
       }
     } catch (e) {
       showToast(String(e));
+    } finally {
+      unlisten?.();
+      regroupBtn.disabled = false;
+      regroupBtn.innerHTML = originalLabel;
+      status.style.display = 'none';
+      status.textContent = '';
     }
   });
 
@@ -485,7 +512,7 @@ function renderComparisonPanel(group: DuplicateGroup) {
 
 async function autoMark(group: DuplicateGroup) {
   try {
-    const toMark = await api.autoMarkGroup(group.id);
+    const toMark = await api.autoMarkGroup(group.id, autoMarkMode);
     toMark.forEach(p => marked.add(p));
     renderComparisonPanel(group);
     renderGroupList();
