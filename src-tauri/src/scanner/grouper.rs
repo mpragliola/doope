@@ -10,7 +10,7 @@ pub fn find_duplicates(
     records: &[FileRecord],
     mode: &ScanMode,
     threshold: u32,
-    progress: impl Fn(&str) + Send + Sync,
+    progress: impl Fn(&str),
 ) -> Vec<DuplicateGroup> {
     let mut groups: Vec<DuplicateGroup> = Vec::new();
 
@@ -332,8 +332,6 @@ mod tests {
             phases_clone.lock().unwrap().push(p.to_string());
         });
         let called = phases.lock().unwrap();
-        assert!(called.contains(&"filename".to_string()));
-        assert!(called.contains(&"exact".to_string()));
-        assert!(called.contains(&"perceptual".to_string()));
+        assert_eq!(*called, vec!["filename", "exact", "perceptual"]);
     }
 }
