@@ -186,8 +186,10 @@ function renderFolderList() {
       ul.querySelectorAll<HTMLElement>('li').forEach(l => l.style.removeProperty('outline'));
       if (parseInt(li.dataset.idx!) !== dragSrc) li.style.outline = '1px solid #3b82f6';
     });
-    li.addEventListener('dragleave', () => {
-      li.style.removeProperty('outline');
+    li.addEventListener('dragleave', (e) => {
+      if (!li.contains(e.relatedTarget as Node)) {
+        li.style.removeProperty('outline');
+      }
     });
     li.addEventListener('drop', (e) => {
       e.preventDefault();
