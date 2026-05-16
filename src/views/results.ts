@@ -9,6 +9,9 @@ let marked = new Set<string>();
 let selectedGroupId: string | null = null;
 let currentThreshold = 8;
 let resultsPriorities: string[] = [];
+let resultsKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+type SortMode = 'default' | 'files-desc' | 'files-asc' | 'size-desc' | 'size-asc';
+let sortMode: SortMode = 'default';
 
 export function renderResults(el: HTMLElement) {
   el.innerHTML = `
@@ -21,7 +24,7 @@ export function renderResults(el: HTMLElement) {
       <span style="font-size:12px;color:#888">Threshold:</span>
       <input type="range" id="results-threshold" min="0" max="20" value="8" style="width:110px;padding:0">
       <span id="results-threshold-lbl" style="font-size:12px;min-width:18px;color:#e2e2e2">8</span>
-      <button class="ghost" id="btn-regroup" style="font-size:12px;padding:5px 10px">Re-group</button>
+      <button class="ghost" id="btn-regroup" style="font-size:12px;padding:5px 10px">Re-group <kbd style="font-size:10px;opacity:0.6">R</kbd></button>
       <button class="ghost" id="btn-toggle-priority" style="font-size:12px;padding:5px 10px;margin-left:auto">Priority ▾</button>
     </div>
     <div id="priority-panel" style="display:none;padding:8px 16px;background:#131313;border-bottom:1px solid #2a2a2a;flex-shrink:0">
@@ -30,7 +33,13 @@ export function renderResults(el: HTMLElement) {
     </div>
     <div style="display:flex;flex:1;overflow:hidden">
       <div style="width:280px;display:flex;flex-direction:column;border-right:1px solid #2a2a2a">
-        <div style="padding:10px 12px;font-size:11px;color:#666;border-bottom:1px solid #1e1e1e">DUPLICATE GROUPS</div>
+        <div style="padding:6px 12px;font-size:11px;color:#666;border-bottom:1px solid #1e1e1e;display:flex;align-items:center">
+          <span style="flex:1">DUPLICATE GROUPS</span>
+          <div style="position:relative">
+            <button class="ghost" id="btn-sort" style="font-size:11px;padding:3px 8px">Sort ▾</button>
+            <div id="sort-dropdown" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:#1e1e1e;border:1px solid #333;border-radius:4px;min-width:110px;padding:4px 0"></div>
+          </div>
+        </div>
         <ul id="group-list" class="scroll-list" style="list-style:none"></ul>
       </div>
       <div id="group-detail" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
@@ -41,16 +50,18 @@ export function renderResults(el: HTMLElement) {
     </div>
     <div style="padding:12px 16px;background:#1a1a1a;border-top:1px solid #2a2a2a;display:flex;align-items:center;gap:12px;flex-shrink:0">
       <span id="lbl-space" style="flex:1;font-size:13px;color:#aaa"></span>
-      <button class="danger" id="btn-delete" disabled>Delete Marked</button>
+      <button class="danger" id="btn-delete" disabled>Delete Marked <kbd style="font-size:10px;opacity:0.7">Del</kbd></button>
     </div>
   `;
 
   el.querySelector('#btn-back')!.addEventListener('click', () => {
-    groups = []; marked.clear(); selectedGroupId = null;
+    groups = []; marked.clear(); selectedGroupId = null; sortMode = 'default';
+    unregisterResultsKeys();
     navigate('scan-config');
   });
   el.querySelector('#btn-delete')!.addEventListener('click', confirmDelete);
   wireControlsBar();
+  registerResultsKeys();
 
   window.addEventListener('scan-complete', loadResults);
 }
@@ -102,6 +113,47 @@ function wireControlsBar() {
     panel.style.display = open ? 'none' : 'block';
     toggleBtn.textContent = open ? 'Priority ▾' : 'Priority ▴';
   });
+
+  wireSortDropdown();
+}
+
+function wireSortDropdown() {
+  const btn = document.getElementById('btn-sort');
+  const dropdown = document.getElementById('sort-dropdown');
+  if (!btn || !dropdown) return;
+
+  const options: { label: string; value: SortMode }[] = [
+    { label: 'Default', value: 'default' },
+    { label: 'Files ↓', value: 'files-desc' },
+    { label: 'Files ↑', value: 'files-asc' },
+    { label: 'Size ↓', value: 'size-desc' },
+    { label: 'Size ↑', value: 'size-asc' },
+  ];
+
+  function renderDropdown() {
+    dropdown!.innerHTML = options.map(o => `
+      <div data-sort="${o.value}" style="padding:5px 12px;cursor:pointer;font-size:11px;color:${sortMode === o.value ? '#e2e2e2' : '#888'};background:${sortMode === o.value ? '#2a2a2a' : 'transparent'}">
+        ${sortMode === o.value ? '✓ ' : ''}${o.label}
+      </div>
+    `).join('');
+    dropdown!.querySelectorAll('[data-sort]').forEach(el => {
+      el.addEventListener('click', () => {
+        sortMode = (el as HTMLElement).dataset.sort as SortMode;
+        dropdown!.style.display = 'none';
+        btn!.textContent = sortMode === 'default' ? 'Sort ▾' : `Sort: ${options.find(o => o.value === sortMode)!.label} ▾`;
+        renderGroupList();
+      });
+    });
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = dropdown.style.display !== 'none';
+    dropdown.style.display = open ? 'none' : 'block';
+    if (!open) renderDropdown();
+  });
+
+  document.addEventListener('click', () => { dropdown.style.display = 'none'; });
 }
 
 export async function loadResults() {
@@ -133,28 +185,56 @@ export async function loadResults() {
 function renderResultsPriorityList() {
   const ul = document.getElementById('results-priority-list');
   if (!ul) return;
+  const grip = `<svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" style="display:block">
+    <circle cx="3" cy="3" r="1.2"/><circle cx="7" cy="3" r="1.2"/>
+    <circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/>
+    <circle cx="3" cy="11" r="1.2"/><circle cx="7" cy="11" r="1.2"/>
+  </svg>`;
+
   ul.innerHTML = resultsPriorities.map((f, i) => `
-    <li draggable="true" data-idx="${i}"
-        style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:#222;border-radius:4px;font-size:11px;cursor:grab">
+    <li data-idx="${i}"
+        style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:#222;border-radius:4px;font-size:11px;user-select:none">
+      <span class="drag-handle" style="cursor:grab;display:flex;align-items:center;color:#555;flex-shrink:0;touch-action:none">${grip}</span>
       <span style="color:#666;margin-right:4px">${i + 1}.</span>
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${f}">${f}</span>
     </li>
   `).join('');
 
-  let dragSrc = -1;
-  ul.querySelectorAll('li').forEach(li => {
-    li.addEventListener('dragstart', () => { dragSrc = parseInt((li as HTMLElement).dataset.idx!); });
-    li.addEventListener('dragover', e => { e.preventDefault(); });
-    li.addEventListener('drop', () => {
-      const dest = parseInt((li as HTMLElement).dataset.idx!);
-      if (dragSrc !== dest) {
-        const [item] = resultsPriorities.splice(dragSrc, 1);
-        resultsPriorities.splice(dest, 0, item);
+  let srcIdx = -1;
+  ul.querySelectorAll<HTMLElement>('.drag-handle').forEach(handle => {
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const li = handle.closest('li') as HTMLElement;
+      srcIdx = parseInt(li.dataset.idx!);
+      handle.setPointerCapture(e.pointerId);
+      li.style.opacity = '0.5';
+    });
+
+    handle.addEventListener('pointerup', (e) => {
+      if (srcIdx === -1) return;
+      const saved = srcIdx;
+      srcIdx = -1;
+      ul.querySelectorAll<HTMLElement>('li').forEach(l => { l.style.opacity = ''; });
+      const overEl = document.elementFromPoint(e.clientX, e.clientY);
+      const overLi = overEl?.closest('li[data-idx]') as HTMLElement | null;
+      const destIdx = overLi ? parseInt(overLi.dataset.idx!) : saved;
+      if (destIdx !== saved) {
+        const [item] = resultsPriorities.splice(saved, 1);
+        resultsPriorities.splice(destIdx, 0, item);
         api.setFolderPriorities(resultsPriorities).catch(() => {});
         renderResultsPriorityList();
       }
     });
   });
+}
+
+function sortedGroups(): DuplicateGroup[] {
+  const copy = [...groups];
+  if (sortMode === 'files-desc') copy.sort((a, b) => b.files.length - a.files.length);
+  else if (sortMode === 'files-asc') copy.sort((a, b) => a.files.length - b.files.length);
+  else if (sortMode === 'size-desc') copy.sort((a, b) => b.wasted_bytes - a.wasted_bytes);
+  else if (sortMode === 'size-asc') copy.sort((a, b) => a.wasted_bytes - b.wasted_bytes);
+  return copy;
 }
 
 function renderGroupList() {
@@ -165,7 +245,7 @@ function renderGroupList() {
     ? 'No duplicates found'
     : `${groups.length} group${groups.length !== 1 ? 's' : ''} found`;
 
-  ul.innerHTML = groups.map(g => {
+  ul.innerHTML = sortedGroups().map(g => {
     const wastedMb = (g.wasted_bytes / 1_048_576).toFixed(1);
 
     // Extended badge: ≈ = perceptual-identical (dist 0), ~ = perceptual-similar, = exact, F filename
@@ -186,9 +266,18 @@ function renderGroupList() {
     const survivors = g.files.filter(f => !marked.has(f.path)).length;
     const markedCount = g.files.length - survivors;
     const noSurvivors = survivors === 0;
-    const borderStyle = noSurvivors ? 'border-left:3px solid #ef4444' : 'border-left:3px solid transparent';
+    const borderColor = noSurvivors && markedCount > 0
+      ? '#ef4444'
+      : markedCount > 0
+        ? '#f59e0b'
+        : 'transparent';
+    const borderStyle = `border-left:3px solid ${borderColor}`;
     const distLabel = g.duplicate_type === 'perceptual' && g.max_distance !== undefined
-      ? `<span style="font-size:10px;color:#555;margin-left:4px">d=${g.max_distance}</span>`
+      ? (() => {
+          const similarity = Math.round((64 - g.max_distance) / 64 * 100);
+          const color = similarity === 100 ? '#22c55e' : similarity >= 90 ? '#a855f7' : '#f59e0b';
+          return `<span style="font-size:10px;color:${color};font-weight:600;margin-left:4px">${similarity}% similar</span>`;
+        })()
       : '';
 
     const survivorLine = markedCount > 0
@@ -205,8 +294,12 @@ function renderGroupList() {
           <span style="font-size:13px;font-weight:500">${g.files.length} files</span>
           <span style="font-size:11px;color:#666;margin-left:auto">${wastedMb} MB</span>
         </div>
-        <div style="font-size:10px;color:#555;display:flex;flex-direction:column;gap:1px;margin-top:2px">
-          ${g.files.map(f => `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttr(f.path)}">${escapeAttr(shortPath(f.path))}</span>`).join('')}
+        <div style="font-size:10px;display:flex;flex-direction:column;gap:1px;margin-top:2px">
+          ${g.files.map(f => {
+            const isMarked = marked.has(f.path);
+            const pathColor = markedCount > 0 ? (isMarked ? '#f87171' : '#4ade80') : '#555';
+            return `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${pathColor}" title="${escapeAttr(f.path)}">${escapeAttr(shortPath(f.path))}</span>`;
+          }).join('')}
         </div>
         ${survivorLine}
       </li>
@@ -245,9 +338,9 @@ function renderGroupDetail(group: DuplicateGroup) {
         <span style="font-size:13px;font-weight:500">${group.files.length} files</span>
         <span style="font-size:11px;color:#666;margin-left:8px">${headerLabel}</span>
       </div>
-      <button class="ghost" data-action="auto-mark" style="font-size:12px;padding:5px 10px">Auto-mark</button>
-      <button class="ghost" data-action="keep-all" style="font-size:12px;padding:5px 10px">Keep all</button>
-      <button class="ghost" data-action="delete-all" style="font-size:12px;padding:5px 10px;color:#fca5a5">Mark all delete</button>
+      <button class="ghost" data-action="auto-mark" style="font-size:12px;padding:5px 10px">Auto-mark <kbd style="font-size:10px;opacity:0.6">A</kbd></button>
+      <button class="ghost" data-action="keep-all" style="font-size:12px;padding:5px 10px">Keep all <kbd style="font-size:10px;opacity:0.6">K</kbd></button>
+      <button class="ghost" data-action="delete-all" style="font-size:12px;padding:5px 10px;color:#fca5a5">Mark all <kbd style="font-size:10px;opacity:0.7">M</kbd></button>
     </div>
     <div id="file-grid" style="flex:1;display:flex;flex-direction:row;overflow-x:auto;gap:3px;padding:4px;background:#0d0d0d;min-height:0"></div>
   `;
@@ -448,12 +541,69 @@ function showLastCopyWarning(cell: HTMLElement, path: string, group: DuplicateGr
   });
 }
 
+function registerResultsKeys() {
+  unregisterResultsKeys();
+  resultsKeyHandler = (e: KeyboardEvent) => {
+    const tag = (e.target as HTMLElement).tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return;
+    if (document.getElementById('lightbox-overlay')) return;
+
+    if (e.key === 'r' || e.key === 'R') {
+      e.preventDefault();
+      (document.getElementById('btn-regroup') as HTMLButtonElement | null)?.click();
+    } else if (e.key === 'Delete') {
+      e.preventDefault();
+      const btn = document.getElementById('btn-delete') as HTMLButtonElement | null;
+      if (btn && !btn.disabled) btn.click();
+    } else if (selectedGroupId) {
+      const group = groups.find(g => g.id === selectedGroupId);
+      if (!group) return;
+      if (e.key === 'a' || e.key === 'A') {
+        e.preventDefault();
+        autoMark(group);
+      } else if (e.key === 'k' || e.key === 'K') {
+        e.preventDefault();
+        group.files.forEach(f => marked.delete(f.path));
+        renderComparisonPanel(group);
+        renderGroupList();
+        updateBottomBar();
+      } else if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        group.files.forEach(f => marked.add(f.path));
+        renderComparisonPanel(group);
+        renderGroupList();
+        updateBottomBar();
+      } else {
+        const n = parseInt(e.key);
+        if (!isNaN(n) && n >= 1 && n <= group.files.length) {
+          e.preventDefault();
+          group.files.forEach((f, i) => {
+            if (i === n - 1) marked.delete(f.path);
+            else marked.add(f.path);
+          });
+          renderComparisonPanel(group);
+          renderGroupList();
+          updateBottomBar();
+        }
+      }
+    }
+  };
+  window.addEventListener('keydown', resultsKeyHandler);
+}
+
+function unregisterResultsKeys() {
+  if (resultsKeyHandler) {
+    window.removeEventListener('keydown', resultsKeyHandler);
+    resultsKeyHandler = null;
+  }
+}
+
 function updateBottomBar() {
   const deleteBtn = document.getElementById('btn-delete') as HTMLButtonElement;
   const spaceLabel = document.getElementById('lbl-space')!;
 
   const anyUnsafe = groups.some(g => g.files.every(f => marked.has(f.path)));
-  deleteBtn.disabled = marked.size === 0 || anyUnsafe;
+  deleteBtn.disabled = marked.size === 0;
 
   const totalBytes = [...marked].reduce((sum, path) => {
     const file = groups.flatMap(g => g.files).find((f: FileInfo) => f.path === path);
@@ -471,16 +621,23 @@ function updateBottomBar() {
 
 async function confirmDelete() {
   const count = marked.size;
-  const confirmed = window.confirm(`Delete ${count} file${count !== 1 ? 's' : ''}? This cannot be undone.`);
+  const anyUnsafe = groups.some(g => g.files.every(f => marked.has(f.path)));
+  const msg = anyUnsafe
+    ? `Delete ${count} file${count !== 1 ? 's' : ''}? Some groups will have NO survivors — all copies will be lost. This cannot be undone.`
+    : `Delete ${count} file${count !== 1 ? 's' : ''}? This cannot be undone.`;
+  const confirmed = window.confirm(msg);
   if (!confirmed) return;
 
   try {
+    const prevIndex = groups.findIndex(g => g.id === selectedGroupId);
     await api.deleteMarked([...marked]);
     marked.clear();
     showToast(`Deleted ${count} file${count !== 1 ? 's' : ''}`, 'success');
     groups = await api.getDuplicateGroups();
-    selectedGroupId = null;
+    const nextGroup = groups[prevIndex] ?? groups[prevIndex - 1] ?? null;
+    selectedGroupId = nextGroup?.id ?? null;
     renderGroupList();
+    if (nextGroup) renderGroupDetail(nextGroup);
     updateBottomBar();
   } catch (e) {
     showToast(String(e));
