@@ -345,4 +345,30 @@ mod tests {
         // both area=0, tie broken by priority → /high/b.jpg wins
         assert_eq!(keeper, "/high/b.jpg");
     }
+
+    #[test]
+    fn quality_mode_keeps_largest_image() {
+        use image::{ImageBuffer, Rgb};
+
+        // Create two real PNG files in a temp dir with different dimensions
+        let dir = tempfile::tempdir().unwrap();
+
+        // small: 10×10
+        let small_path = dir.path().join("small.png");
+        let small_img: ImageBuffer<Rgb<u8>, _> = ImageBuffer::new(10, 10);
+        small_img.save(&small_path).unwrap();
+
+        // large: 100×100
+        let large_path = dir.path().join("large.png");
+        let large_img: ImageBuffer<Rgb<u8>, _> = ImageBuffer::new(100, 100);
+        large_img.save(&large_path).unwrap();
+
+        let group = make_group(vec![
+            (small_path.to_str().unwrap(), 50),
+            (large_path.to_str().unwrap(), 200),
+        ]);
+        let priorities: Vec<String> = vec![];
+        let keeper = quality_keeper(&group, &priorities);
+        assert_eq!(keeper, large_path.to_str().unwrap());
+    }
 }
