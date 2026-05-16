@@ -13,6 +13,9 @@ let currentThreshold = 8;
 let resultsKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 type SortMode = 'default' | 'files-desc' | 'files-asc' | 'size-desc' | 'size-asc';
 let sortMode: SortMode = 'default';
+let autoMarkMode: 'priority' | 'quality' = 'priority';
+let fileIndex = new Map<string, FileInfo>();
+let selectedLi: HTMLElement | null = null;
 
 export function renderResults(el: HTMLElement) {
   el.innerHTML = `
@@ -26,6 +29,7 @@ export function renderResults(el: HTMLElement) {
       <input type="range" id="results-threshold" min="0" max="20" value="8" style="width:110px;padding:0">
       <span id="results-threshold-lbl" style="font-size:12px;min-width:18px;color:#e2e2e2">8</span>
       <button class="ghost" id="btn-regroup" style="font-size:12px;padding:5px 10px;margin-left:auto">Re-group <kbd style="font-size:10px;opacity:0.6">R</kbd></button>
+      <span id="regroup-status" style="font-size:12px;color:#666;display:none"></span>
     </div>
     <div style="display:flex;flex:1;overflow:hidden">
       <div style="width:280px;display:flex;flex-direction:column;border-right:1px solid #2a2a2a">
@@ -76,6 +80,41 @@ function reapplyGroupSelection() {
   });
 }
 
+function buildFileIndex() {
+  fileIndex.clear();
+  for (const g of groups) {
+    for (const f of g.files) fileIndex.set(f.path, f);
+  }
+}
+
+function updateGroupListItem(group: DuplicateGroup) {
+  const li = document.querySelector(`#group-list li[data-id="${group.id}"]`) as HTMLElement | null;
+  if (!li) return;
+  const survivors = group.files.filter(f => !marked.has(f.path)).length;
+  const markedCount = group.files.length - survivors;
+  const noSurvivors = survivors === 0 && markedCount > 0;
+  const borderColor = noSurvivors ? '#ef4444' : markedCount > 0 ? '#f59e0b' : 'transparent';
+  li.style.borderLeftColor = borderColor;
+  li.querySelectorAll<HTMLElement>('.group-path-span').forEach((span, i) => {
+    const f = group.files[i];
+    if (!f) return;
+    span.style.color = markedCount > 0 ? (marked.has(f.path) ? '#f87171' : '#4ade80') : '#555';
+  });
+  const existing = li.querySelector<HTMLElement>('.survivor-line');
+  if (markedCount > 0) {
+    const text = `${markedCount} marked → ${survivors} survive${noSurvivors ? ' ⚠' : ''}`;
+    const color = noSurvivors ? '#ef4444' : '#888';
+    if (existing) { existing.style.color = color; existing.textContent = text; }
+    else {
+      const div = document.createElement('div');
+      div.className = 'survivor-line';
+      div.style.cssText = `font-size:10px;color:${color};margin-top:2px`;
+      div.textContent = text;
+      li.appendChild(div);
+    }
+  } else { existing?.remove(); }
+}
+
 function wireControlsBar() {
   const slider = document.getElementById('results-threshold') as HTMLInputElement;
   const lbl = document.getElementById('results-threshold-lbl')!;
@@ -84,11 +123,31 @@ function wireControlsBar() {
     lbl.textContent = slider.value;
   });
 
-  document.getElementById('btn-regroup')!.addEventListener('click', async () => {
+  const regroupBtn = document.getElementById('btn-regroup') as HTMLButtonElement;
+  regroupBtn.addEventListener('click', async () => {
+    if (regroupBtn.disabled) return;
+
+    const status = document.getElementById('regroup-status') as HTMLElement;
+    const originalLabel = regroupBtn.innerHTML;
+    regroupBtn.disabled = true;
+    regroupBtn.textContent = 'Re-grouping…';
+    status.style.display = 'inline';
+
+    const phaseLabels: Record<string, string> = {
+      filename: 'filename…',
+      exact: 'exact hash…',
+      perceptual: 'perceptual…',
+    };
+
+    let unlisten: (() => void) | null = null;
     try {
+      unlisten = await api.onRegroupProgress((phase) => {
+        status.textContent = phaseLabels[phase] ?? phase;
+      });
       await api.regroup(currentThreshold);
       const prevSelected = selectedGroupId;
       groups = await api.getDuplicateGroups();
+      buildFileIndex();
       marked.clear();
       selectedGroupId = null;
       selectedGroupIds.clear();
@@ -106,6 +165,12 @@ function wireControlsBar() {
       }
     } catch (e) {
       showToast(String(e));
+    } finally {
+      unlisten?.();
+      regroupBtn.disabled = false;
+      regroupBtn.innerHTML = originalLabel;
+      status.style.display = 'none';
+      status.textContent = '';
     }
   });
 
@@ -157,6 +222,7 @@ export async function loadResults() {
   selectedGroupId = null;
   selectedGroupIds.clear();
   lastClickedSortedIndex = -1;
+  buildFileIndex();
 
   // Sync threshold slider to last scan's setting
   currentThreshold = lastPhashThreshold;
@@ -181,6 +247,7 @@ function sortedGroups(): DuplicateGroup[] {
 }
 
 function renderGroupList() {
+  selectedLi = null;
   const ul = document.getElementById('group-list')!;
   const summary = document.getElementById('lbl-summary')!;
 
@@ -224,7 +291,7 @@ function renderGroupList() {
       : '';
 
     const survivorLine = markedCount > 0
-      ? `<div style="font-size:10px;color:${noSurvivors ? '#ef4444' : '#888'};margin-top:2px">
+      ? `<div class="survivor-line" style="font-size:10px;color:${noSurvivors ? '#ef4444' : '#888'};margin-top:2px">
            ${markedCount} marked → ${survivors} survive${noSurvivors ? ' ⚠' : ''}
          </div>`
       : '';
@@ -241,7 +308,7 @@ function renderGroupList() {
           ${g.files.map(f => {
             const isMarked = marked.has(f.path);
             const pathColor = markedCount > 0 ? (isMarked ? '#f87171' : '#4ade80') : '#555';
-            return `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${pathColor}" title="${escapeAttr(f.path)}">${escapeAttr(shortPath(f.path))}</span>`;
+            return `<span class="group-path-span" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${pathColor}" title="${escapeAttr(f.path)}">${escapeAttr(shortPath(f.path))}</span>`;
           }).join('')}
         </div>
         ${survivorLine}
@@ -316,7 +383,16 @@ function renderGroupDetail(group: DuplicateGroup) {
         ${multiCount > 1 ? `<span style="font-size:11px;color:#60a5fa;margin-left:8px">${multiCount} groups selected</span>` : ''}
       </div>
       ${bulkBtn}
-      <button class="ghost" data-action="auto-mark" style="font-size:12px;padding:5px 10px">Auto-mark${multiCount > 1 ? ' this' : ' <kbd style="font-size:10px;opacity:0.6">A</kbd>'}</button>
+      <div style="display:flex;gap:1px;position:relative">
+        <button class="ghost" data-action="auto-mark" style="font-size:12px;padding:5px 10px;border-radius:4px 0 0 4px">
+          Auto-mark${multiCount > 1 ? ' this' : ` (${autoMarkMode}) <kbd style="font-size:10px;opacity:0.6">A</kbd>`}
+        </button>
+        <button class="ghost" data-action="auto-mark-toggle" style="font-size:12px;padding:5px 7px;border-radius:0 4px 4px 0;border-left:1px solid #333">▾</button>
+        <div id="am-dropdown" style="display:none;position:absolute;right:0;top:100%;z-index:200;background:#1e1e1e;border:1px solid #333;border-radius:4px;min-width:130px;padding:4px 0;margin-top:2px">
+          <button class="ghost" data-action="am-select-priority" style="width:100%;text-align:left;padding:5px 12px;font-size:12px">By priority</button>
+          <button class="ghost" data-action="am-select-quality" style="width:100%;text-align:left;padding:5px 12px;font-size:12px">By quality</button>
+        </div>
+      </div>
       <button class="ghost" data-action="keep-all" style="font-size:12px;padding:5px 10px">Keep all <kbd style="font-size:10px;opacity:0.6">K</kbd></button>
       <button class="ghost" data-action="delete-all" style="font-size:12px;padding:5px 10px;color:#fca5a5">Mark all <kbd style="font-size:10px;opacity:0.7">M</kbd></button>
     </div>
@@ -325,18 +401,36 @@ function renderGroupDetail(group: DuplicateGroup) {
 
   el.querySelector('[data-action=auto-mark-all]')?.addEventListener('click', () => autoMarkSelected());
   el.querySelector('[data-action=auto-mark]')!.addEventListener('click', () => autoMark(group));
+
+  const amDropdown = el.querySelector<HTMLElement>('#am-dropdown')!;
+  el.querySelector('[data-action=auto-mark-toggle]')!.addEventListener('click', (e) => {
+    e.stopPropagation();
+    amDropdown.style.display = amDropdown.style.display === 'none' ? 'block' : 'none';
+  });
+  el.querySelector('[data-action=am-select-priority]')!.addEventListener('click', () => {
+    autoMarkMode = 'priority';
+    amDropdown.style.display = 'none';
+    renderGroupDetail(group);
+  });
+  el.querySelector('[data-action=am-select-quality]')!.addEventListener('click', () => {
+    autoMarkMode = 'quality';
+    amDropdown.style.display = 'none';
+    renderGroupDetail(group);
+  });
+  document.addEventListener('click', () => { amDropdown.style.display = 'none'; }, { once: true });
+
   el.querySelector('[data-action=keep-all]')!.addEventListener('click', () => {
     const targetIds = selectedGroupIds.size > 1 ? selectedGroupIds : new Set([group.id]);
     groups.filter(g => targetIds.has(g.id)).forEach(g => g.files.forEach(f => marked.delete(f.path)));
     renderComparisonPanel(group);
-    renderGroupList();
+    updateGroupListItem(group);
     updateBottomBar();
   });
   el.querySelector('[data-action=delete-all]')!.addEventListener('click', () => {
     const targetIds = selectedGroupIds.size > 1 ? selectedGroupIds : new Set([group.id]);
     groups.filter(g => targetIds.has(g.id)).forEach(g => g.files.forEach(f => marked.add(f.path)));
     renderComparisonPanel(group);
-    renderGroupList();
+    updateGroupListItem(group);
     updateBottomBar();
   });
 
@@ -397,7 +491,7 @@ function renderComparisonPanel(group: DuplicateGroup) {
       e.stopPropagation();
       marked.delete(path);
       renderComparisonPanel(group);
-      renderGroupList();
+      updateGroupListItem(group);
       updateBottomBar();
     });
 
@@ -409,7 +503,7 @@ function renderComparisonPanel(group: DuplicateGroup) {
       } else {
         marked.add(path);
         renderComparisonPanel(group);
-        renderGroupList();
+        updateGroupListItem(group);
         updateBottomBar();
       }
     });
@@ -418,7 +512,7 @@ function renderComparisonPanel(group: DuplicateGroup) {
 
 async function autoMark(group: DuplicateGroup) {
   try {
-    const toMark = await api.autoMarkGroup(group.id);
+    const toMark = await api.autoMarkGroup(group.id, autoMarkMode);
     toMark.forEach(p => marked.add(p));
     renderComparisonPanel(group);
     renderGroupList();
@@ -431,7 +525,7 @@ async function autoMark(group: DuplicateGroup) {
 async function autoMarkSelected() {
   try {
     for (const id of selectedGroupIds) {
-      const toMark = await api.autoMarkGroup(id);
+      const toMark = await api.autoMarkGroup(id, autoMarkMode);
       toMark.forEach(p => marked.add(p));
     }
     const previewGroup = groups.find(g => g.id === selectedGroupId);
@@ -527,7 +621,7 @@ function showLastCopyWarning(cell: HTMLElement, path: string, group: DuplicateGr
     warning.remove();
     marked.add(path);
     renderComparisonPanel(group);
-    renderGroupList();
+    updateGroupListItem(group);
     updateBottomBar();
   });
 
@@ -564,14 +658,14 @@ function registerResultsKeys() {
         const targets = isMulti ? groups.filter(g => selectedGroupIds.has(g.id)) : [group];
         targets.forEach(g => g.files.forEach(f => marked.delete(f.path)));
         renderComparisonPanel(group);
-        renderGroupList();
+        updateGroupListItem(group);
         updateBottomBar();
       } else if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
         const targets = isMulti ? groups.filter(g => selectedGroupIds.has(g.id)) : [group];
         targets.forEach(g => g.files.forEach(f => marked.add(f.path)));
         renderComparisonPanel(group);
-        renderGroupList();
+        updateGroupListItem(group);
         updateBottomBar();
       } else if (!isMulti) {
         const n = parseInt(e.key);
@@ -582,7 +676,7 @@ function registerResultsKeys() {
             else marked.add(f.path);
           });
           renderComparisonPanel(group);
-          renderGroupList();
+          updateGroupListItem(group);
           updateBottomBar();
         }
       }
@@ -605,15 +699,12 @@ function updateBottomBar() {
   const anyUnsafe = groups.some(g => g.files.every(f => marked.has(f.path)));
   deleteBtn.disabled = marked.size === 0;
 
-  const totalBytes = [...marked].reduce((sum, path) => {
-    const file = groups.flatMap(g => g.files).find((f: FileInfo) => f.path === path);
-    return sum + (file?.size ?? 0);
-  }, 0);
+  const totalBytes = [...marked].reduce((sum, path) => sum + (fileIndex.get(path)?.size ?? 0), 0);
 
   if (marked.size === 0) {
     spaceLabel.textContent = 'No files marked for deletion';
   } else if (anyUnsafe) {
-    spaceLabel.textContent = '⚠ One group has no survivors — adjust marking';
+    spaceLabel.textContent = `⚠ ${marked.size} file${marked.size !== 1 ? 's' : ''} marked — some groups fully deleted (${(totalBytes / 1_048_576).toFixed(1)} MB)`;
   } else {
     spaceLabel.textContent = `${marked.size} file${marked.size !== 1 ? 's' : ''} marked — ${(totalBytes / 1_048_576).toFixed(1)} MB to free`;
   }
@@ -634,6 +725,8 @@ async function confirmDelete() {
     marked.clear();
     showToast(`Deleted ${count} file${count !== 1 ? 's' : ''}`, 'success');
     groups = await api.getDuplicateGroups();
+    buildFileIndex();
+    selectedLi = null;
     const nextGroup = groups[prevIndex] ?? groups[prevIndex - 1] ?? null;
     selectedGroupId = nextGroup?.id ?? null;
     selectedGroupIds.clear();

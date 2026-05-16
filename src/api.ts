@@ -21,8 +21,8 @@ export const api = {
   setFolderPriorities: (priorities: string[]) =>
     invoke<void>('set_folder_priorities', { priorities }),
 
-  autoMarkGroup: (groupId: string) =>
-    invoke<string[]>('auto_mark_group', { groupId }),
+  autoMarkGroup: (groupId: string, mode: 'priority' | 'quality') =>
+    invoke<string[]>('auto_mark_group', { groupId, mode }),
 
   deleteMarked: (pathsToDelete: string[]) =>
     invoke<string[]>('delete_marked', { pathsToDelete }),
@@ -35,4 +35,7 @@ export const api = {
 
   onProgress: (cb: (evt: ProgressEvent) => void): Promise<UnlistenFn> =>
     listen<ProgressEvent>('progress', e => cb(e.payload)),
+
+  onRegroupProgress: (cb: (phase: string) => void): Promise<UnlistenFn> =>
+    listen<string>('regroup-progress', e => cb(e.payload)),
 };
