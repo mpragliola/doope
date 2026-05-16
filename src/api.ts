@@ -35,4 +35,7 @@ export const api = {
 
   onProgress: (cb: (evt: ProgressEvent) => void): Promise<UnlistenFn> =>
     listen<ProgressEvent>('progress', e => cb(e.payload)),
+
+  onRegroupProgress: (cb: (phase: string) => void): Promise<UnlistenFn> =>
+    listen<string>('regroup-progress', e => cb(e.payload)),
 };
