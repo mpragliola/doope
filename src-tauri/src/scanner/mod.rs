@@ -37,10 +37,21 @@ pub fn run_phase1(
         path: String::new(),
         phase: Phase::Walking,
         cached: None,
+        ext_deltas: None,
     });
 
     let files = walk_folders(&options.folders, &cancel);
     let total = files.len();
+
+    // Tell the UI how many files were found so it can stop looking frozen.
+    progress_cb(ProgressEvent {
+        current: 0,
+        total,
+        path: String::new(),
+        phase: Phase::Walking,
+        cached: None,
+        ext_deltas: None,
+    });
 
     // Pre-compute path strings once; avoids repeated allocation inside par_iter.
     let path_strs: Vec<String> = files.iter()
@@ -58,9 +69,11 @@ pub fn run_phase1(
     let counter = Arc::new(AtomicUsize::new(0));
     let cached_count = Arc::new(AtomicUsize::new(0));
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+    let ext_accumulator: Arc<Mutex<HashMap<String, u32>>> = Arc::new(Mutex::new(HashMap::new()));
 
     enum Outcome { Cached(FileRecord), New(FileRecord) }
 
+    let ext_acc = Arc::clone(&ext_accumulator);
     let outcomes: Vec<Option<Outcome>> = files
         .par_iter()
         .zip(path_strs.par_iter())
@@ -72,17 +85,28 @@ pub fn run_phase1(
             // O(1) HashMap lookup — no lock, no SQLite round-trip.
             if let Some(cached) = cache_snapshot.get(path_str) {
                 if cached.size == found.size && cached.mtime == found.mtime {
+                    let ext = std::path::Path::new(path_str.as_str())
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    ext_acc.lock().unwrap().entry(ext).and_modify(|c| *c += 1).or_insert(1);
+
                     let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
                     let nc = cached_count.fetch_add(1, Ordering::Relaxed) + 1;
                     // Cache hits are near-instant; emitting every file floods the IPC queue.
                     // Emit every 200 to keep the UI responsive without backlog buildup.
+                    // Drain the ext accumulator so the frontend can count all files, not just
+                    // the one whose path is in the event.
                     if n % 200 == 0 || n == total {
+                        let deltas = std::mem::take(&mut *ext_acc.lock().unwrap());
                         progress_cb(ProgressEvent {
                             current: n,
                             total,
                             path: path_str.clone(),
                             phase: Phase::Hashing,
                             cached: Some(nc),
+                            ext_deltas: if deltas.is_empty() { None } else { Some(deltas) },
                         });
                     }
                     return Some(Outcome::Cached(cached.clone()));
@@ -131,11 +155,28 @@ pub fn run_phase1(
                 path: path_str.clone(),
                 phase: Phase::Hashing,
                 cached: if nc > 0 { Some(nc) } else { None },
+                ext_deltas: None,
             });
 
             Some(Outcome::New(record))
         })
         .collect();
+
+    // After collect() all par_iter tasks are done. Drain any ext counts that raced past the
+    // last batch event's drain (possible due to relaxed atomic ordering in par_iter).
+    let remaining_deltas = std::mem::take(&mut *ext_accumulator.lock().unwrap());
+    if !remaining_deltas.is_empty() {
+        let n = counter.load(Ordering::Relaxed);
+        let nc = cached_count.load(Ordering::Relaxed);
+        progress_cb(ProgressEvent {
+            current: n,
+            total,
+            path: String::new(),
+            phase: Phase::Hashing,
+            cached: if nc > 0 { Some(nc) } else { None },
+            ext_deltas: Some(remaining_deltas),
+        });
+    }
 
     let mut records: Vec<FileRecord> = Vec::with_capacity(outcomes.len());
     let mut new_records: Vec<FileRecord> = Vec::new();

@@ -72,6 +72,7 @@ pub async fn scan(
         path: String::new(),
         phase: Phase::Grouping,
         cached: None,
+        ext_deltas: None,
     });
 
     println!(
@@ -106,6 +107,7 @@ pub async fn scan(
         path: String::new(),
         phase: Phase::Done,
         cached: None,
+        ext_deltas: None,
     });
 
     Ok(())

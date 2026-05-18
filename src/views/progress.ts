@@ -189,10 +189,19 @@ export async function activateProgress() {
     }
 
     // Accumulate extension counts on every event (cheap), but defer rendering.
-    if (evt.phase === 'hashing' && evt.path) {
-      const dot = evt.path.lastIndexOf('.');
-      const ext = dot >= 0 ? evt.path.slice(dot).toLowerCase() : '(none)';
-      extCounts.set(ext, (extCounts.get(ext) ?? 0) + 1);
+    if (evt.phase === 'hashing') {
+      if (evt.ext_deltas) {
+        // Batch cache-hit event: backend sends deltas for all files in the throttled window.
+        for (const [rawExt, delta] of Object.entries(evt.ext_deltas)) {
+          const ext = rawExt ? `.${rawExt}` : '(none)';
+          extCounts.set(ext, (extCounts.get(ext) ?? 0) + delta);
+        }
+      } else if (evt.path) {
+        // Non-cached file: path is present, extract extension directly.
+        const dot = evt.path.lastIndexOf('.');
+        const ext = dot >= 0 ? evt.path.slice(dot).toLowerCase() : '(none)';
+        extCounts.set(ext, (extCounts.get(ext) ?? 0) + 1);
+      }
     }
 
     pending = evt;

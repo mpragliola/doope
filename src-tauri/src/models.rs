@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -113,6 +114,10 @@ pub struct ProgressEvent {
     pub phase: Phase,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached: Option<usize>,
+    /// Extension counts (without leading dot) for files processed in this batch.
+    /// Only set on throttled cache-hit events to compensate for skipped per-file events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ext_deltas: Option<HashMap<String, u32>>,
 }
 
 #[cfg(test)]

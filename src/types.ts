@@ -35,4 +35,5 @@ export interface ProgressEvent {
   path: string;
   phase: Phase;
   cached?: number;
+  ext_deltas?: Record<string, number>;
 }
