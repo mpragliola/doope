@@ -6,7 +6,8 @@
     "strict": true,
     "noEmit": true,
     "outDir": "dist",
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "skipLibCheck": true
   },
   "include": ["src"]
 }
