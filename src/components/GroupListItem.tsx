@@ -1,20 +1,14 @@
 import type { DuplicateGroup } from '../types';
 
-function shortPath(path: string): string {
-  const parts = path.split(/[\\/]/);
-  return parts.length <= 2 ? path : `…/${parts.slice(-2).join('/')}`;
-}
-
 interface GroupListItemProps {
   group: DuplicateGroup;
   marks: Set<string>;
   isSelected: boolean;
   isMultiSelected: boolean;
-  style: React.CSSProperties;
   onClick: (e: React.MouseEvent) => void;
 }
 
-export function GroupListItem({ group: g, marks, isSelected, isMultiSelected, style, onClick }: GroupListItemProps) {
+export function GroupListItem({ group: g, marks, isSelected, isMultiSelected, onClick }: GroupListItemProps) {
   const survivors = g.files.filter((f) => !marks.has(f.path)).length;
   const markedCount = g.files.length - survivors;
   const noSurvivors = survivors === 0 && markedCount > 0;
@@ -44,7 +38,6 @@ export function GroupListItem({ group: g, marks, isSelected, isMultiSelected, st
   return (
     <div
       style={{
-        ...style,
         background: bg,
         borderLeft: `3px solid ${borderColor}`,
         borderBottom: '1px solid #1e1e1e',
@@ -74,7 +67,7 @@ export function GroupListItem({ group: g, marks, isSelected, isMultiSelected, st
               style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: pathColor }}
               title={f.path}
             >
-              {shortPath(f.path)}
+              {f.path}
             </span>
           );
         })}

@@ -5,11 +5,14 @@ import { GroupList } from '../components/GroupList';
 import { GroupListHeader } from '../components/GroupListHeader';
 import { GroupDetail } from '../components/GroupDetail';
 import { ResultsBottomBar } from '../components/ResultsBottomBar';
+import { SidebarPagination } from '../components/SidebarPagination';
 import { useResultsStore, filteredSortedGroups } from '../stores/useResultsStore';
 import { useScanStateStore } from '../stores/useScanStateStore';
 import { useToastStore } from '../stores/useToastStore';
 import { useResultsKeys } from '../hooks/useResultsKeys';
 import { api } from '../api';
+
+const PAGE_SIZE = 50;
 
 interface ResultsProps {
   active: boolean;
@@ -23,6 +26,7 @@ export function Results({ active, onNavigate }: ResultsProps) {
   const [currentThreshold, setCurrentThreshold] = useState(8);
   const [regrouping, setRegrouping] = useState(false);
   const [regroupStatus, setRegroupStatus] = useState('');
+  const [currentPage, setCurrentPage] = useState(0);
 
   useResultsKeys(active);
 
@@ -73,7 +77,12 @@ export function Results({ active, onNavigate }: ResultsProps) {
   }
 
   const visible = filteredSortedGroups(store.groups, store.filterExt, store.sortMode);
+  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages - 1);
+  const pagedGroups = visible.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
   const selectedGroup = store.groups.find((g) => g.id === store.selectedGroupId) ?? null;
+
+  useEffect(() => { setCurrentPage(0); }, [store.filterExt, store.sortMode, store.groups]);
 
   const summaryLabel =
     store.groups.length === 0
@@ -133,7 +142,13 @@ export function Results({ active, onNavigate }: ResultsProps) {
           style={{ width: store.sidebarWidth }}
         >
           <GroupListHeader />
-          <GroupList groups={visible} onSelectGroup={handleSelectGroup} />
+          <GroupList groups={pagedGroups} indexOffset={safePage * PAGE_SIZE} onSelectGroup={handleSelectGroup} />
+          <SidebarPagination
+            currentPage={safePage}
+            totalPages={totalPages}
+            onPrev={() => setCurrentPage((p) => Math.max(0, p - 1))}
+            onNext={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
+          />
         </div>
 
         <div
