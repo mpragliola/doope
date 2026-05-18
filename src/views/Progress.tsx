@@ -17,6 +17,10 @@ export function Progress({ active, onNavigate }: ProgressProps) {
   const pendingRef = useRef<ProgressEvent | null>(null);
   const rafRef = useRef<number>(0);
   const unlistenRef = useRef<(() => void) | null>(null);
+  const unlistenPromiseRef = useRef<Promise<() => void> | null>(null);
+  const onNavigateRef = useRef(onNavigate);
+
+  useEffect(() => { onNavigateRef.current = onNavigate; });
 
   useEffect(() => {
     if (!active) return;
@@ -32,12 +36,11 @@ export function Progress({ active, onNavigate }: ProgressProps) {
       store.applyEvent(evt);
     }
 
-    api.onProgress((evt) => {
+    const p = api.onProgress((evt) => {
       if (evt.phase === 'done') {
         if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; }
-        unlistenRef.current?.();
-        unlistenRef.current = null;
-        onNavigate('results');
+        p.then((fn) => { fn(); unlistenRef.current = null; });
+        onNavigateRef.current('results');
         window.dispatchEvent(new CustomEvent('scan-complete'));
         return;
       }
@@ -47,22 +50,30 @@ export function Progress({ active, onNavigate }: ProgressProps) {
       }
       pendingRef.current = evt;
       if (!rafRef.current) rafRef.current = requestAnimationFrame(flush);
-    }).then((unlisten) => {
-      unlistenRef.current = unlisten;
     });
+    unlistenPromiseRef.current = p;
+    p.then((fn) => { unlistenRef.current = fn; });
 
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      unlistenRef.current?.();
-      unlistenRef.current = null;
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
+      } else {
+        unlistenPromiseRef.current?.then((fn) => fn());
+      }
     };
   }, [active]);
 
   async function cancel() {
     await api.cancelScan();
-    unlistenRef.current?.();
-    unlistenRef.current = null;
-    onNavigate('results');
+    if (unlistenRef.current) {
+      unlistenRef.current();
+      unlistenRef.current = null;
+    } else {
+      unlistenPromiseRef.current?.then((fn) => fn());
+    }
+    onNavigateRef.current('results');
     window.dispatchEvent(new CustomEvent('scan-complete'));
   }
 
