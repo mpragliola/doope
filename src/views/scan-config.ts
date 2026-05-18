@@ -2,7 +2,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { api } from '../api';
 import { navigate, showToast } from '../main';
 import type { ScanOptions } from '../types';
-import { setLastPhashThreshold } from '../scan-state';
+import { setLastPhashThreshold, setLastFolderPriorities } from '../scan-state';
 
 const STORAGE_KEY = 'doope.folders';
 
@@ -287,6 +287,7 @@ async function startScan() {
   };
 
   setLastPhashThreshold(threshold);
+  setLastFolderPriorities(folders);
   navigate('progress');
 
   const MAX_WAIT_MS = 30_000;

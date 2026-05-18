@@ -1,7 +1,7 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { api } from '../api';
 import { navigate, showToast } from '../main';
-import { lastPhashThreshold } from '../scan-state';
+import { lastPhashThreshold, lastFolderPriorities } from '../scan-state';
 import type { DuplicateGroup, FileInfo } from '../types';
 
 let groups: DuplicateGroup[] = [];
@@ -19,6 +19,12 @@ let selectedLi: HTMLElement | null = null;
 let filterExt: string | null = null;
 let availableExts: string[] = [];
 let sidebarWidth = 280;
+let currentVisible: DuplicateGroup[] = [];
+let scrollAbort: AbortController | null = null;
+let groupListItemH = 72;
+let kanbanMode = false;
+let folderPriorities: string[] = [];
+let kanbanGroups: DuplicateGroup[] = [];
 
 export function renderResults(el: HTMLElement) {
   el.innerHTML = `
@@ -70,6 +76,38 @@ export function renderResults(el: HTMLElement) {
   });
   el.querySelector('#btn-delete')!.addEventListener('click', confirmDelete);
   wireControlsBar();
+  el.querySelector<HTMLElement>('#group-list')!.addEventListener('click', (e) => {
+    const li = (e.target as HTMLElement).closest<HTMLElement>('li[data-id]');
+    if (!li) return;
+    const me = e as MouseEvent;
+    const clickedId = li.dataset.id!;
+    const clickedIdx = currentVisible.findIndex(g => g.id === clickedId);
+    if (me.shiftKey && lastClickedSortedIndex !== -1) {
+      const lo = Math.min(lastClickedSortedIndex, clickedIdx);
+      const hi = Math.max(lastClickedSortedIndex, clickedIdx);
+      for (let i = lo; i <= hi; i++) selectedGroupIds.add(currentVisible[i].id);
+    } else if (me.ctrlKey || me.metaKey) {
+      if (selectedGroupIds.has(clickedId)) {
+        selectedGroupIds.delete(clickedId);
+        if (selectedGroupId === clickedId) {
+          const rem = [...selectedGroupIds];
+          selectedGroupId = rem.length > 0 ? rem[rem.length - 1] : null;
+        }
+      } else {
+        selectedGroupIds.add(clickedId);
+      }
+    } else {
+      selectedGroupIds.clear();
+      selectedGroupIds.add(clickedId);
+    }
+    if (selectedGroupIds.has(clickedId)) {
+      selectedGroupId = clickedId;
+      lastClickedSortedIndex = clickedIdx;
+    }
+    reapplyGroupSelection();
+    const group = groups.find(g => g.id === selectedGroupId);
+    if (group) renderGroupDetail(group);
+  });
   registerResultsKeys();
 
   window.addEventListener('scan-complete', loadResults);
@@ -164,6 +202,7 @@ function wireControlsBar() {
       selectedGroupId = null;
       selectedGroupIds.clear();
       lastClickedSortedIndex = -1;
+      kanbanMode = false;
       renderGroupList();
       updateBottomBar();
       if (prevSelected) {
@@ -310,6 +349,8 @@ export async function loadResults() {
   selectedGroupIds.clear();
   lastClickedSortedIndex = -1;
   filterExt = null;
+  kanbanMode = false;
+  folderPriorities = lastFolderPriorities;
   buildFileIndex();
   buildExtList();
   const extBtn = document.getElementById('btn-ext-filter');
@@ -351,11 +392,54 @@ function filteredSortedGroups(): DuplicateGroup[] {
   return copy;
 }
 
+function groupItemHtml(g: DuplicateGroup): string {
+  const wastedMb = (g.wasted_bytes / 1_048_576).toFixed(1);
+  let badge: string, badgeColor: string;
+  if (g.duplicate_type === 'exact') {
+    badge = '='; badgeColor = '#3b82f6';
+  } else if (g.duplicate_type === 'perceptual') {
+    badge = g.max_distance === 0 ? '≈' : '~';
+    badgeColor = g.max_distance === 0 ? '#22c55e' : '#a855f7';
+  } else {
+    badge = 'F'; badgeColor = '#f59e0b';
+  }
+  const survivors = g.files.filter(f => !marked.has(f.path)).length;
+  const markedCount = g.files.length - survivors;
+  const noSurvivors = survivors === 0;
+  const borderColor = noSurvivors && markedCount > 0 ? '#ef4444' : markedCount > 0 ? '#f59e0b' : 'transparent';
+  const distLabel = g.duplicate_type === 'perceptual' && g.max_distance !== undefined
+    ? (() => {
+        const sim = Math.round((64 - g.max_distance) / 64 * 100);
+        const c = sim === 100 ? '#22c55e' : sim >= 90 ? '#a855f7' : '#f59e0b';
+        return `<span style="font-size:10px;color:${c};font-weight:600;margin-left:4px">${sim}% similar</span>`;
+      })()
+    : '';
+  const survivorLine = markedCount > 0
+    ? `<div class="survivor-line" style="font-size:10px;color:${noSurvivors ? '#ef4444' : '#888'};margin-top:2px">${markedCount} marked → ${survivors} survive${noSurvivors ? ' ⚠' : ''}</div>`
+    : '';
+  return `<li data-id="${g.id}" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #1e1e1e;display:flex;flex-direction:column;gap:2px;border-left:3px solid ${borderColor}">
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="background:${badgeColor};color:#fff;font-size:10px;border-radius:3px;padding:1px 5px">${badge}</span>
+      ${distLabel}
+      <span style="font-size:13px;font-weight:500">${g.files.length} files</span>
+      <span style="font-size:11px;color:#666;margin-left:auto">${wastedMb} MB</span>
+    </div>
+    <div style="font-size:10px;display:flex;flex-direction:column;gap:1px;margin-top:2px">
+      ${g.files.map(f => {
+        const pathColor = markedCount > 0 ? (marked.has(f.path) ? '#f87171' : '#4ade80') : '#555';
+        return `<span class="group-path-span" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${pathColor}" title="${escapeAttr(f.path)}">${escapeAttr(shortPath(f.path))}</span>`;
+      }).join('')}
+    </div>
+    ${survivorLine}
+  </li>`;
+}
+
 function renderGroupList() {
   selectedLi = null;
   const ul = document.getElementById('group-list')!;
   const summary = document.getElementById('lbl-summary')!;
   const visible = filteredSortedGroups();
+  currentVisible = visible;
 
   if (groups.length === 0) {
     summary.textContent = 'No duplicates found';
@@ -365,108 +449,49 @@ function renderGroupList() {
     summary.textContent = `${groups.length} group${groups.length !== 1 ? 's' : ''} found`;
   }
 
-  ul.innerHTML = visible.map(g => {
-    const wastedMb = (g.wasted_bytes / 1_048_576).toFixed(1);
+  // Virtual scroll: only render the visible slice + overscan.
+  // Maintains a padding-top/bottom spacer so the scrollbar reflects the true total height.
+  scrollAbort?.abort();
+  scrollAbort = new AbortController();
 
-    // Extended badge: ≈ = perceptual-identical (dist 0), ~ = perceptual-similar, = exact, F filename
-    let badge: string;
-    let badgeColor: string;
-    if (g.duplicate_type === 'exact') {
-      badge = '='; badgeColor = '#3b82f6';
-    } else if (g.duplicate_type === 'perceptual') {
-      if (g.max_distance === 0) {
-        badge = '≈'; badgeColor = '#22c55e';
-      } else {
-        badge = '~'; badgeColor = '#a855f7';
-      }
-    } else {
-      badge = 'F'; badgeColor = '#f59e0b';
+  let inner = ul.querySelector<HTMLDivElement>(':scope > div');
+  if (!inner) {
+    inner = document.createElement('div');
+    ul.innerHTML = '';
+    ul.appendChild(inner);
+  }
+  const vsInner = inner;
+
+  function paint() {
+    const h = groupListItemH;
+    const scrollTop = ul.scrollTop;
+    const viewH = ul.clientHeight || 500;
+    const start = Math.max(0, Math.floor(scrollTop / h) - 5);
+    const end = Math.min(visible.length - 1, Math.ceil((scrollTop + viewH) / h) + 5);
+    vsInner.style.paddingTop = `${start * h}px`;
+    vsInner.style.paddingBottom = `${Math.max(0, (visible.length - 1 - end) * h)}px`;
+    vsInner.innerHTML = visible.slice(start, end + 1).map(groupItemHtml).join('');
+    // Self-calibrate item height from first real item
+    if (start === 0 && vsInner.firstElementChild) {
+      const measured = (vsInner.firstElementChild as HTMLElement).offsetHeight;
+      if (measured > 10) groupListItemH = measured;
     }
+    reapplyGroupSelection();
+  }
 
-    const survivors = g.files.filter(f => !marked.has(f.path)).length;
-    const markedCount = g.files.length - survivors;
-    const noSurvivors = survivors === 0;
-    const borderColor = noSurvivors && markedCount > 0
-      ? '#ef4444'
-      : markedCount > 0
-        ? '#f59e0b'
-        : 'transparent';
-    const borderStyle = `border-left:3px solid ${borderColor}`;
-    const distLabel = g.duplicate_type === 'perceptual' && g.max_distance !== undefined
-      ? (() => {
-          const similarity = Math.round((64 - g.max_distance) / 64 * 100);
-          const color = similarity === 100 ? '#22c55e' : similarity >= 90 ? '#a855f7' : '#f59e0b';
-          return `<span style="font-size:10px;color:${color};font-weight:600;margin-left:4px">${similarity}% similar</span>`;
-        })()
-      : '';
+  let rafId = 0;
+  ul.addEventListener('scroll', () => {
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => { rafId = 0; paint(); });
+  }, { passive: true, signal: scrollAbort.signal });
 
-    const survivorLine = markedCount > 0
-      ? `<div class="survivor-line" style="font-size:10px;color:${noSurvivors ? '#ef4444' : '#888'};margin-top:2px">
-           ${markedCount} marked → ${survivors} survive${noSurvivors ? ' ⚠' : ''}
-         </div>`
-      : '';
-
-    return `
-      <li data-id="${g.id}" style="padding:10px 12px;cursor:pointer;border-bottom:1px solid #1e1e1e;display:flex;flex-direction:column;gap:2px;${borderStyle}">
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="background:${badgeColor};color:#fff;font-size:10px;border-radius:3px;padding:1px 5px">${badge}</span>
-          ${distLabel}
-          <span style="font-size:13px;font-weight:500">${g.files.length} files</span>
-          <span style="font-size:11px;color:#666;margin-left:auto">${wastedMb} MB</span>
-        </div>
-        <div style="font-size:10px;display:flex;flex-direction:column;gap:1px;margin-top:2px">
-          ${g.files.map(f => {
-            const isMarked = marked.has(f.path);
-            const pathColor = markedCount > 0 ? (isMarked ? '#f87171' : '#4ade80') : '#555';
-            return `<span class="group-path-span" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${pathColor}" title="${escapeAttr(f.path)}">${escapeAttr(shortPath(f.path))}</span>`;
-          }).join('')}
-        </div>
-        ${survivorLine}
-      </li>
-    `;
-  }).join('');
-
-  ul.querySelectorAll('li[data-id]').forEach(li => {
-    li.addEventListener('click', (e) => {
-      const me = e as MouseEvent;
-      const clickedId = (li as HTMLElement).dataset.id!;
-      const clickedIdx = visible.findIndex(g => g.id === clickedId);
-
-      if (me.shiftKey && lastClickedSortedIndex !== -1) {
-        const lo = Math.min(lastClickedSortedIndex, clickedIdx);
-        const hi = Math.max(lastClickedSortedIndex, clickedIdx);
-        for (let i = lo; i <= hi; i++) selectedGroupIds.add(visible[i].id);
-      } else if (me.ctrlKey || me.metaKey) {
-        if (selectedGroupIds.has(clickedId)) {
-          selectedGroupIds.delete(clickedId);
-          if (selectedGroupId === clickedId) {
-            const remaining = [...selectedGroupIds];
-            selectedGroupId = remaining.length > 0 ? remaining[remaining.length - 1] : null;
-          }
-        } else {
-          selectedGroupIds.add(clickedId);
-        }
-      } else {
-        selectedGroupIds.clear();
-        selectedGroupIds.add(clickedId);
-      }
-
-      if (selectedGroupIds.has(clickedId)) {
-        selectedGroupId = clickedId;
-        lastClickedSortedIndex = clickedIdx;
-      }
-
-      reapplyGroupSelection();
-      const group = groups.find(g => g.id === selectedGroupId);
-      if (group) renderGroupDetail(group);
-    });
-  });
-
-  reapplyGroupSelection();
+  ul.scrollTop = 0;
+  paint();
 }
 
 function renderGroupDetail(group: DuplicateGroup) {
   const el = document.getElementById('group-detail')!;
+  const multiCount = selectedGroupIds.size;
 
   let headerLabel = '';
   if (group.duplicate_type === 'perceptual') {
@@ -479,10 +504,17 @@ function renderGroupDetail(group: DuplicateGroup) {
     headerLabel = 'Filename match';
   }
 
-  const multiCount = selectedGroupIds.size;
   const bulkBtn = multiCount > 1
     ? `<button class="ghost" data-action="auto-mark-all" style="font-size:12px;padding:5px 10px;color:#93c5fd;border-color:#1e3a5f">Auto-mark ${multiCount} selected <kbd style="font-size:10px;opacity:0.6">A</kbd></button>`
     : '';
+
+  const kanbanToggle = multiCount > 1
+    ? `<button class="ghost" data-action="toggle-kanban" style="font-size:12px;padding:5px 10px${kanbanMode ? ';color:#93c5fd;border-color:#1e3a5f' : ''}">${kanbanMode ? '☰ Detail' : '⊞ Kanban'}</button>`
+    : '';
+
+  const fileGridStyle = kanbanMode
+    ? 'flex:1;display:flex;flex-direction:column;overflow:auto;padding:0;gap:0;background:#0a0a0a;min-height:0'
+    : 'flex:1;display:flex;flex-direction:row;overflow-x:auto;gap:3px;padding:4px;background:#0d0d0d;min-height:0';
 
   el.innerHTML = `
     <div style="padding:10px 14px;border-bottom:1px solid #1e1e1e;display:flex;gap:8px;align-items:center;flex-shrink:0">
@@ -491,6 +523,7 @@ function renderGroupDetail(group: DuplicateGroup) {
         <span style="font-size:11px;color:#666;margin-left:8px">${headerLabel}</span>
         ${multiCount > 1 ? `<span style="font-size:11px;color:#60a5fa;margin-left:8px">${multiCount} groups selected</span>` : ''}
       </div>
+      ${kanbanToggle}
       ${bulkBtn}
       <div style="display:flex;gap:1px;position:relative">
         <button class="ghost" data-action="auto-mark" style="font-size:12px;padding:5px 10px;border-radius:4px 0 0 4px">
@@ -505,8 +538,13 @@ function renderGroupDetail(group: DuplicateGroup) {
       <button class="ghost" data-action="keep-all" style="font-size:12px;padding:5px 10px">Keep all <kbd style="font-size:10px;opacity:0.6">K</kbd></button>
       <button class="ghost" data-action="delete-all" style="font-size:12px;padding:5px 10px;color:#fca5a5">Mark all <kbd style="font-size:10px;opacity:0.7">M</kbd></button>
     </div>
-    <div id="file-grid" style="flex:1;display:flex;flex-direction:row;overflow-x:auto;gap:3px;padding:4px;background:#0d0d0d;min-height:0"></div>
+    <div id="file-grid" style="${fileGridStyle}"></div>
   `;
+
+  el.querySelector('[data-action=toggle-kanban]')?.addEventListener('click', () => {
+    kanbanMode = !kanbanMode;
+    renderGroupDetail(group);
+  });
 
   el.querySelector('[data-action=auto-mark-all]')?.addEventListener('click', () => autoMarkSelected());
   el.querySelector('[data-action=auto-mark]')!.addEventListener('click', () => autoMark(group));
@@ -530,29 +568,41 @@ function renderGroupDetail(group: DuplicateGroup) {
 
   el.querySelector('[data-action=keep-all]')!.addEventListener('click', () => {
     const targetIds = selectedGroupIds.size > 1 ? selectedGroupIds : new Set([group.id]);
-    groups.filter(g => targetIds.has(g.id)).forEach(g => g.files.forEach(f => marked.delete(f.path)));
-    renderComparisonPanel(group);
-    updateGroupListItem(group);
+    const targetGroups = groups.filter(g => targetIds.has(g.id));
+    targetGroups.forEach(g => g.files.forEach(f => marked.delete(f.path)));
+    if (kanbanMode) {
+      refreshAllKanbanCells();
+      targetGroups.forEach(g => updateGroupListItem(g));
+    } else {
+      renderComparisonPanel(group);
+      updateGroupListItem(group);
+    }
     updateBottomBar();
   });
   el.querySelector('[data-action=delete-all]')!.addEventListener('click', () => {
     const targetIds = selectedGroupIds.size > 1 ? selectedGroupIds : new Set([group.id]);
-    groups.filter(g => targetIds.has(g.id)).forEach(g => g.files.forEach(f => marked.add(f.path)));
-    renderComparisonPanel(group);
-    updateGroupListItem(group);
+    const targetGroups = groups.filter(g => targetIds.has(g.id));
+    targetGroups.forEach(g => g.files.forEach(f => marked.add(f.path)));
+    if (kanbanMode) {
+      refreshAllKanbanCells();
+      targetGroups.forEach(g => updateGroupListItem(g));
+    } else {
+      renderComparisonPanel(group);
+      updateGroupListItem(group);
+    }
     updateBottomBar();
   });
 
-  renderComparisonPanel(group);
+  if (kanbanMode && multiCount > 1) {
+    const selectedGroups = groups.filter(g => selectedGroupIds.has(g.id));
+    renderKanbanView(selectedGroups);
+  } else {
+    renderComparisonPanel(group);
+  }
 }
 
 function renderComparisonPanel(group: DuplicateGroup) {
   const grid = document.getElementById('file-grid')!;
-
-  const maxPixels = group.files.reduce((max, f) => {
-    const px = (f.width && f.height) ? f.width * f.height : 0;
-    return px > max ? px : max;
-  }, 0);
 
   grid.innerHTML = group.files.map(f => {
     const isMarked = marked.has(f.path);
@@ -560,21 +610,13 @@ function renderComparisonPanel(group: DuplicateGroup) {
     const sizeMb = (f.size / 1_048_576).toFixed(2);
     const borderColor = isMarked ? '#7f1d1d' : '#1a3a28';
     const stripBg = isMarked ? '#2d1515' : '#0f1f18';
-    const px = (f.width && f.height) ? f.width * f.height : 0;
-    const isBestRes = maxPixels > 0 && px === maxPixels;
-
-    const resBadge = isBestRes
-      ? `<span style="font-size:9px;font-weight:700;background:#854d0e;color:#fde68a;border-radius:3px;padding:1px 4px;flex-shrink:0">★ Best</span>`
-      : '';
-    const resLabel = (f.width && f.height)
-      ? `<span style="font-size:10px;color:${isBestRes ? '#fde68a' : '#666'}">${f.width}×${f.height}</span>`
-      : '';
 
     const imageArea = isImage
       ? `<div style="flex:1;position:relative;min-height:0;overflow:hidden;background:#080808">
            <img
              src="${convertFileSrc(f.path)}"
              data-action="lightbox"
+             data-imgpath="${escapeAttr(f.path)}"
              style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;cursor:zoom-in"
              onerror="this.style.opacity='0.2'"
            >
@@ -641,7 +683,12 @@ async function autoMark(group: DuplicateGroup) {
   try {
     const toMark = await api.autoMarkGroup(group.id, autoMarkMode);
     toMark.forEach(p => marked.add(p));
-    renderComparisonPanel(group);
+    if (kanbanMode) {
+      refreshKanbanRow(group.id);
+    } else {
+      renderComparisonPanel(group);
+    }
+    updateGroupListItem(group);
     renderGroupList();
     updateBottomBar();
   } catch (e) {
@@ -655,8 +702,13 @@ async function autoMarkSelected() {
       const toMark = await api.autoMarkGroup(id, autoMarkMode);
       toMark.forEach(p => marked.add(p));
     }
-    const previewGroup = groups.find(g => g.id === selectedGroupId);
-    if (previewGroup) renderComparisonPanel(previewGroup);
+    if (kanbanMode) {
+      refreshAllKanbanCells();
+      kanbanGroups.forEach(g => updateGroupListItem(g));
+    } else {
+      const previewGroup = groups.find(g => g.id === selectedGroupId);
+      if (previewGroup) renderComparisonPanel(previewGroup);
+    }
     renderGroupList();
     updateBottomBar();
   } catch (e) {
@@ -784,15 +836,15 @@ function registerResultsKeys() {
         e.preventDefault();
         const targets = isMulti ? groups.filter(g => selectedGroupIds.has(g.id)) : [group];
         targets.forEach(g => g.files.forEach(f => marked.delete(f.path)));
-        renderComparisonPanel(group);
-        updateGroupListItem(group);
+        if (kanbanMode) { refreshAllKanbanCells(); targets.forEach(g => updateGroupListItem(g)); }
+        else { renderComparisonPanel(group); updateGroupListItem(group); }
         updateBottomBar();
       } else if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
         const targets = isMulti ? groups.filter(g => selectedGroupIds.has(g.id)) : [group];
         targets.forEach(g => g.files.forEach(f => marked.add(f.path)));
-        renderComparisonPanel(group);
-        updateGroupListItem(group);
+        if (kanbanMode) { refreshAllKanbanCells(); targets.forEach(g => updateGroupListItem(g)); }
+        else { renderComparisonPanel(group); updateGroupListItem(group); }
         updateBottomBar();
       } else if (!isMulti) {
         const n = parseInt(e.key);
@@ -866,6 +918,164 @@ async function confirmDelete() {
     showToast(String(e));
   }
 }
+
+// ── Kanban view ──────────────────────────────────────────────────────────────
+
+function assignToFolder(filePath: string, folders: string[]): number {
+  const norm = filePath.replace(/\\/g, '/');
+  let bestIdx = -1;
+  let bestLen = -1;
+  for (let i = 0; i < folders.length; i++) {
+    const f = folders[i].replace(/\\/g, '/').replace(/\/$/, '');
+    if (norm.startsWith(f + '/') || norm === f) {
+      if (f.length > bestLen) { bestLen = f.length; bestIdx = i; }
+    }
+  }
+  return bestIdx;
+}
+
+function kanbanThumbHtml(f: FileInfo, group: DuplicateGroup): string {
+  const isMarked = marked.has(f.path);
+  const survivors = group.files.filter(fi => !marked.has(fi.path)).length;
+  const markedCount = group.files.length - survivors;
+  const borderColor = isMarked ? '#7f1d1d' : markedCount > 0 ? '#1a3a28' : '#222';
+  const stripBg = isMarked ? '#2d1515' : markedCount > 0 ? '#0f1f18' : '#141414';
+  const isImage = f.media_type === 'image';
+  const imageArea = isImage
+    ? `<div style="height:100px;position:relative;overflow:hidden;background:#080808">
+         <img src="${convertFileSrc(f.path)}" style="width:100%;height:100%;object-fit:contain" onerror="this.style.opacity='0.2'">
+       </div>`
+    : `<div style="height:60px;display:flex;align-items:center;justify-content:center;background:#0a0a0a;color:#444;font-size:10px">▶ VIDEO</div>`;
+  return `<div data-kanban-thumb data-path="${escapeAttr(f.path)}" data-group-id="${escapeAttr(group.id)}"
+               style="border:2px solid ${borderColor};border-radius:4px;overflow:hidden;margin-bottom:3px;flex-shrink:0">
+    ${imageArea}
+    <div style="padding:2px 4px;background:${stripBg};display:flex;align-items:center;gap:3px">
+      <span style="flex:1;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+            title="${escapeAttr(f.path)}">${escapeAttr(filename(f.path))}</span>
+      <button data-action="kanban-keep" data-path="${escapeAttr(f.path)}" data-group-id="${escapeAttr(group.id)}"
+              class="${isMarked ? 'ghost' : 'primary'}" style="font-size:9px;padding:1px 4px;flex-shrink:0" title="Keep">✓</button>
+      <button data-action="kanban-delete" data-path="${escapeAttr(f.path)}" data-group-id="${escapeAttr(group.id)}"
+              class="${isMarked ? 'danger' : 'ghost'}" style="font-size:9px;padding:1px 4px;flex-shrink:0" title="Delete">✕</button>
+    </div>
+  </div>`;
+}
+
+function kanbanCellInner(group: DuplicateGroup, folderIdx: number): string {
+  const files = group.files.filter(f => assignToFolder(f.path, folderPriorities) === folderIdx);
+  if (files.length === 0) {
+    return `<div style="flex:1;display:flex;align-items:center;justify-content:center;color:#2a2a2a;font-size:16px;min-height:50px">—</div>`;
+  }
+  return files.map(f => kanbanThumbHtml(f, group)).join('');
+}
+
+function refreshKanbanRow(groupId: string) {
+  document.querySelectorAll<HTMLElement>(`[data-kanban-cell][data-group-id="${groupId}"]`).forEach(cell => {
+    const folderIdx = parseInt(cell.dataset.folderIdx!);
+    const group = kanbanGroups.find(g => g.id === groupId);
+    if (group) cell.innerHTML = kanbanCellInner(group, folderIdx);
+  });
+}
+
+function refreshAllKanbanCells() {
+  document.querySelectorAll<HTMLElement>('[data-kanban-cell]').forEach(cell => {
+    const groupId = cell.dataset.groupId!;
+    const folderIdx = parseInt(cell.dataset.folderIdx!);
+    const group = kanbanGroups.find(g => g.id === groupId);
+    if (group) cell.innerHTML = kanbanCellInner(group, folderIdx);
+  });
+}
+
+function markKanbanColumn(folderIdx: number) {
+  const colFiles: Array<{ file: FileInfo; group: DuplicateGroup }> = [];
+  for (const g of kanbanGroups) {
+    for (const f of g.files) {
+      if (assignToFolder(f.path, folderPriorities) === folderIdx) colFiles.push({ file: f, group: g });
+    }
+  }
+  const noSurvivorGroups = kanbanGroups.filter(g => {
+    const wouldMark = new Set(marked);
+    colFiles.filter(c => c.group.id === g.id).forEach(c => wouldMark.add(c.file.path));
+    return g.files.every(f => wouldMark.has(f.path));
+  });
+  if (noSurvivorGroups.length > 0) {
+    const n = noSurvivorGroups.length;
+    if (!window.confirm(`Marking this column leaves ${n} group${n > 1 ? 's' : ''} with no survivors. Mark anyway?`)) return;
+  }
+  for (const { file, group } of colFiles) {
+    marked.add(file.path);
+    updateGroupListItem(group);
+  }
+  refreshAllKanbanCells();
+  updateBottomBar();
+}
+
+function renderKanbanView(selectedGroups: DuplicateGroup[]) {
+  kanbanGroups = selectedGroups;
+  const grid = document.getElementById('file-grid')!;
+
+  if (folderPriorities.length === 0) {
+    grid.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;flex:1;color:#555;font-size:13px">No folder priorities — re-run a scan to enable kanban view</div>`;
+    return;
+  }
+
+  const n = folderPriorities.length;
+  const colMinWidth = 200;
+
+  const headersHtml = folderPriorities.map((f, fi) => `
+    <div style="position:sticky;top:0;z-index:10;background:#161616;border-bottom:2px solid #2a2a2a;border-right:1px solid #222;padding:6px 8px;display:flex;align-items:center;gap:4px">
+      <span style="flex:1;font-size:10px;color:#888;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+            title="${escapeAttr(f)}">${fi === 0 ? '★ ' : ''}${escapeAttr(f.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() || f)}</span>
+      <button class="ghost" data-action="mark-col" data-col-idx="${fi}"
+              style="font-size:9px;padding:2px 5px;color:#fca5a5;flex-shrink:0">✕ All</button>
+    </div>
+  `).join('');
+
+  const rowsHtml = selectedGroups.map(g =>
+    folderPriorities.map((_, fi) => `
+      <div data-kanban-cell data-group-id="${escapeAttr(g.id)}" data-folder-idx="${fi}"
+           style="border-bottom:1px solid #1a1a1a;border-right:1px solid #1e1e1e;padding:4px;display:flex;flex-direction:column;min-height:60px">
+        ${kanbanCellInner(g, fi)}
+      </div>
+    `).join('')
+  ).join('');
+
+  grid.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(${n}, minmax(${colMinWidth}px, 1fr));min-width:${n * colMinWidth}px">
+      ${headersHtml}
+      ${rowsHtml}
+    </div>
+  `;
+
+  grid.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action!;
+
+    if (action === 'mark-col') {
+      markKanbanColumn(parseInt(btn.dataset.colIdx!));
+      return;
+    }
+
+    if (action !== 'kanban-keep' && action !== 'kanban-delete') return;
+    const path = btn.dataset.path!;
+    const groupId = btn.dataset.groupId!;
+    const group = kanbanGroups.find(g => g.id === groupId);
+    if (!group) return;
+
+    if (action === 'kanban-keep') {
+      marked.delete(path);
+    } else {
+      const survivors = group.files.filter(f => f.path !== path && !marked.has(f.path)).length;
+      if (survivors === 0 && !window.confirm('Last copy — mark for deletion anyway?')) return;
+      marked.add(path);
+    }
+    refreshKanbanRow(groupId);
+    updateGroupListItem(group);
+    updateBottomBar();
+  });
+}
+
+// ── End kanban view ───────────────────────────────────────────────────────────
 
 function filename(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
