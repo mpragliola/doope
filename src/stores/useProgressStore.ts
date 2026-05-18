@@ -60,6 +60,9 @@ function makeEtaTracker(): EtaTracker {
   };
 }
 
+// Module-level — not part of store state
+const eta = makeEtaTracker();
+
 interface ProgressState {
   phase: Phase | null;
   current: number;
@@ -68,7 +71,6 @@ interface ProgressState {
   cachedCount: number;
   extCounts: Map<string, number>;
   etaInfo: { eta: string; rate: string } | null;
-  _eta: EtaTracker;
   reset: () => void;
   applyEvent: (evt: ProgressEvent) => void;
 }
@@ -81,13 +83,16 @@ export const useProgressStore = create<ProgressState>()((set, get) => ({
   cachedCount: 0,
   extCounts: new Map(),
   etaInfo: null,
-  _eta: makeEtaTracker(),
   reset: () => {
-    get()._eta.reset();
+    eta.reset();
     set({ phase: null, current: 0, total: 0, path: '', cachedCount: 0, extCounts: new Map(), etaInfo: null });
   },
   applyEvent: (evt) => {
-    const { _eta, cachedCount, extCounts: prevCounts } = get();
+    const { cachedCount, extCounts: prevCounts } = get();
+    if (evt.phase === 'done') {
+      set({ phase: 'done' });
+      return;
+    }
     if (evt.phase === 'walking') {
       set({ phase: 'walking', total: evt.total, path: '', etaInfo: null });
       return;
@@ -108,8 +113,8 @@ export const useProgressStore = create<ProgressState>()((set, get) => ({
         const ext = dot >= 0 ? evt.path.slice(dot).toLowerCase() : '(none)';
         extCounts.set(ext, (extCounts.get(ext) ?? 0) + 1);
       }
-      _eta.record(evt.current);
-      const etaInfo = _eta.compute(evt.current, evt.total);
+      eta.record(evt.current);
+      const etaInfo = eta.compute(evt.current, evt.total);
       set({
         phase: 'hashing',
         current: evt.current,

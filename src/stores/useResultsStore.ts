@@ -79,7 +79,11 @@ export const useResultsStore = create<ResultsState>()((set, get) => ({
       const hi = Math.max(s.lastClickedSortedIndex, toIndex);
       const selectedGroupIds = new Set(s.selectedGroupIds);
       for (let i = lo; i <= hi; i++) selectedGroupIds.add(visibleGroups[i].id);
-      return { selectedGroupIds };
+      return {
+        selectedGroupIds,
+        selectedGroupId: visibleGroups[toIndex].id,
+        lastClickedSortedIndex: toIndex,
+      };
     }),
 
   setSortMode: (sortMode) => set({ sortMode }),
@@ -98,6 +102,7 @@ export const useResultsStore = create<ResultsState>()((set, get) => ({
       sortMode: 'default',
       filterExt: null,
       kanbanMode: false,
+      autoMarkMode: 'priority',
       fileIndex: new Map(),
     }),
 }));
