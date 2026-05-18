@@ -63,11 +63,11 @@ export function FolderList() {
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
-    if (over && active.id !== over.id) {
-      const from = folders.indexOf(active.id as string);
-      const to = folders.indexOf(over.id as string);
-      reorderFolders(from, to);
-    }
+    if (!over || active.id === over.id) return;
+    const from = folders.indexOf(active.id as string);
+    const to = folders.indexOf(over.id as string);
+    if (from === -1 || to === -1) return;
+    reorderFolders(from, to);
   }
 
   async function handleAdd() {
@@ -104,7 +104,11 @@ export function FolderList() {
       const path: string | undefined = (item.getAsFile() as any)?.path;
       if (path) added.push(path);
     }
-    if (added.length) addFolders(added);
+    if (added.length) {
+      addFolders(added);
+    } else {
+      showToast('Drop folders, not files', 'error');
+    }
   }
 
   return (

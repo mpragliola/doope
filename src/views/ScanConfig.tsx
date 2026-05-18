@@ -44,6 +44,8 @@ export function ScanConfig({ active, onNavigate }: ScanConfigProps) {
   async function startScan() {
     setScanState(threshold, folders);
     await api.setFolderPriorities(folders);
+    // Navigate first so the user sees the progress view immediately.
+    // The retry loop below handles the case where a previous scan is still winding down.
     onNavigate('progress');
 
     const MAX_WAIT_MS = 30_000;
