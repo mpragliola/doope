@@ -631,12 +631,12 @@ function renderComparisonPanel(group: DuplicateGroup) {
           <div style="flex:1;overflow:hidden;min-width:0">
             <div style="font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:4px">
               <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttr(f.path)}">${filename(f.path)}</span>
-              ${resBadge}
+              <span class="res-badge"></span>
             </div>
             <div style="font-size:10px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                  title="${escapeAttr(f.path)}">${escapeAttr(f.path)}</div>
             <div style="font-size:10px;color:#888;display:flex;gap:6px">
-              <span>${sizeMb} MB</span>${resLabel}
+              <span>${sizeMb} MB</span><span class="res-label"></span>
             </div>
           </div>
           <button class="${isMarked ? 'ghost' : 'primary'}" data-action="keep"
@@ -647,6 +647,34 @@ function renderComparisonPanel(group: DuplicateGroup) {
       </div>
     `;
   }).join('');
+
+  // Read dimensions lazily from img.naturalWidth after load, then update best-res badge.
+  const dimMap = new Map<string, { w: number; h: number }>();
+  const imgs = grid.querySelectorAll<HTMLImageElement>('img[data-imgpath]');
+  let pending = imgs.length;
+  if (pending > 0) {
+    function updateBadges() {
+      let maxPx = 0;
+      dimMap.forEach(({ w, h }) => { maxPx = Math.max(maxPx, w * h); });
+      grid.querySelectorAll<HTMLElement>('[data-path]').forEach(card => {
+        const dim = dimMap.get(card.dataset.path!);
+        const px = dim ? dim.w * dim.h : 0;
+        const best = maxPx > 0 && px === maxPx;
+        const badge = card.querySelector<HTMLElement>('.res-badge')!;
+        const label = card.querySelector<HTMLElement>('.res-label')!;
+        badge.innerHTML = best ? `<span style="font-size:9px;font-weight:700;background:#854d0e;color:#fde68a;border-radius:3px;padding:1px 4px;flex-shrink:0">★ Best</span>` : '';
+        if (dim) { label.textContent = `${dim.w}×${dim.h}`; label.style.color = best ? '#fde68a' : '#666'; }
+      });
+    }
+    imgs.forEach(img => {
+      function settle() {
+        if (img.naturalWidth > 0) dimMap.set(img.dataset.imgpath!, { w: img.naturalWidth, h: img.naturalHeight });
+        if (--pending === 0) updateBadges();
+      }
+      if (img.complete) settle();
+      else { img.addEventListener('load', settle, { once: true }); img.addEventListener('error', settle, { once: true }); }
+    });
+  }
 
   grid.querySelectorAll('[data-path]').forEach(cell => {
     const path = (cell as HTMLElement).dataset.path!;
