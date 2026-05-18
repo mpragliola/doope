@@ -1,5 +1,5 @@
-import { convertFileSrc } from '@tauri-apps/api/core';
 import type { DuplicateGroup, FileInfo } from '../types';
+import { KanbanThumb } from './KanbanThumb';
 import { useResultsStore } from '../stores/useResultsStore';
 
 function assignToFolder(filePath: string, folders: string[]): number {
@@ -9,10 +9,7 @@ function assignToFolder(filePath: string, folders: string[]): number {
   for (let i = 0; i < folders.length; i++) {
     const f = folders[i].replace(/\\/g, '/').replace(/\/$/, '');
     if (norm.startsWith(f + '/') || norm === f) {
-      if (f.length > bestLen) {
-        bestLen = f.length;
-        bestIdx = i;
-      }
+      if (f.length > bestLen) { bestLen = f.length; bestIdx = i; }
     }
   }
   return bestIdx;
@@ -38,9 +35,7 @@ export function KanbanView({ groups, folderPriorities }: KanbanViewProps) {
     const colFiles: Array<{ file: FileInfo; group: DuplicateGroup }> = [];
     for (const g of groups) {
       for (const f of g.files) {
-        if (assignToFolder(f.path, folderPriorities) === folderIdx) {
-          colFiles.push({ file: f, group: g });
-        }
+        if (assignToFolder(f.path, folderPriorities) === folderIdx) colFiles.push({ file: f, group: g });
       }
     }
     const noSurvivorGroups = groups.filter((g) => {
@@ -107,59 +102,17 @@ export function KanbanView({ groups, folderPriorities }: KanbanViewProps) {
                 className="border-b border-b-[#1a1a1a] border-r border-r-[#1e1e1e] p-1 flex flex-col min-h-[60px]"
               >
                 {files.length === 0 ? (
-                  <div className="flex-1 flex items-center justify-center text-[#2a2a2a] text-[16px] min-h-[50px]">
-                    —
-                  </div>
+                  <div className="flex-1 flex items-center justify-center text-[#2a2a2a] text-[16px] min-h-[50px]">—</div>
                 ) : (
-                  files.map((f) => {
-                    const isMarked = marks.has(f.path);
-                    const isImage = f.media_type === 'image';
-                    const borderColor = isMarked ? '#7f1d1d' : '#222';
-                    const stripBg = isMarked ? '#2d1515' : '#141414';
-                    return (
-                      <div
-                        key={f.path}
-                        className="rounded overflow-hidden mb-[3px] flex-shrink-0"
-                        style={{ border: `2px solid ${borderColor}` }}
-                      >
-                        {isImage ? (
-                          <div className="h-[100px] relative overflow-hidden bg-[#080808]">
-                            <img
-                              src={convertFileSrc(f.path)}
-                              className="w-full h-full object-contain"
-                              onError={(e) => { e.currentTarget.style.opacity = '0.2'; }}
-                            />
-                          </div>
-                        ) : (
-                          <div className="h-[60px] flex items-center justify-center bg-[#0a0a0a] text-[#444] text-[10px]">
-                            ▶ VIDEO
-                          </div>
-                        )}
-                        <div className="px-1 py-0.5 flex items-center gap-[3px]" style={{ background: stripBg }}>
-                          <span
-                            className="flex-1 text-[9px] overflow-hidden text-ellipsis whitespace-nowrap"
-                            title={f.path}
-                          >
-                            {f.path.split(/[\\/]/).pop()}
-                          </span>
-                          <button
-                            className={`text-[9px] px-1 py-0.5 rounded flex-shrink-0 ${!isMarked ? 'bg-[#3b82f6] text-white' : 'bg-[#2a2a2a] text-[#e2e2e2] border border-[#444]'}`}
-                            title="Keep"
-                            onClick={() => handleFileToggle(f, g, true)}
-                          >
-                            ✓
-                          </button>
-                          <button
-                            className={`text-[9px] px-1 py-0.5 rounded flex-shrink-0 ${isMarked ? 'bg-[#ef4444] text-white' : 'bg-[#2a2a2a] text-[#e2e2e2] border border-[#444]'}`}
-                            title="Delete"
-                            onClick={() => handleFileToggle(f, g, false)}
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
+                  files.map((f) => (
+                    <KanbanThumb
+                      key={f.path}
+                      file={f}
+                      isMarked={marks.has(f.path)}
+                      onKeep={() => handleFileToggle(f, g, true)}
+                      onDelete={() => handleFileToggle(f, g, false)}
+                    />
+                  ))
                 )}
               </div>
             );
