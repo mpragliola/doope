@@ -151,6 +151,7 @@ export async function activateProgress() {
     pending = null;
 
     if (evt.phase === 'hashing') {
+      bar.classList.remove('indeterminate');
       const pct = evt.total > 0 ? (evt.current / evt.total) * 100 : 0;
       bar.style.width = `${pct}%`;
       phaseLabel.textContent = 'Hashing…';
@@ -173,7 +174,10 @@ export async function activateProgress() {
 
   unlisten = await api.onProgress((evt: ProgressEvent) => {
     if (evt.phase === 'walking') {
-      phaseLabel.textContent = 'Scanning folders…';
+      bar.classList.add('indeterminate');
+      phaseLabel.textContent = evt.total > 0
+        ? `Found ${evt.total.toLocaleString()} files, loading cache…`
+        : 'Scanning folders…';
       countLabel.textContent = '';
       currentPath.textContent = '';
       etaLabel.textContent = '';
