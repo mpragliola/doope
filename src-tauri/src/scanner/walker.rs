@@ -18,6 +18,7 @@ pub fn walk_folders(folders: &[String], cancel: &Arc<AtomicBool>) -> Vec<FoundFi
         .flat_map(|folder| walk_single(folder, cancel))
         .collect();
     files.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+    files.dedup_by(|a, b| a.path == b.path);
     files
 }
 
@@ -68,6 +69,20 @@ mod tests {
             .collect();
         assert!(names.contains(&"photo.jpg".to_string()));
         assert!(names.contains(&"clip.mp4".to_string()));
+    }
+
+    #[test]
+    fn deduplicates_overlapping_folders() {
+        let dir = tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("photo.jpg"), b"fake").unwrap();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let parent = dir.path().to_string_lossy().to_string();
+        let child = sub.to_string_lossy().to_string();
+        let found = walk_folders(&[parent, child], &cancel);
+        assert_eq!(found.len(), 1);
     }
 
     #[test]

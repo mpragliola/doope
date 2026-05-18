@@ -12,6 +12,12 @@ pub fn find_duplicates(
     threshold: u32,
     progress: impl Fn(&str),
 ) -> Vec<DuplicateGroup> {
+    // Defensive dedup — callers should not produce duplicate paths, but guard here anyway.
+    let mut seen = std::collections::HashSet::new();
+    let records: Vec<&FileRecord> = records.iter().filter(|r| seen.insert(&r.path)).collect();
+    let records: Vec<FileRecord> = records.into_iter().cloned().collect();
+    let records = records.as_slice();
+
     let mut groups: Vec<DuplicateGroup> = Vec::new();
 
     match mode {
