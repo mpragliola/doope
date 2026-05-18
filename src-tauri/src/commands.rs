@@ -226,23 +226,26 @@ pub async fn auto_mark_group(
 #[tauri::command]
 pub async fn delete_marked(
     paths_to_delete: Vec<String>,
+    allow_extinction: bool,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
     let groups = state.groups.lock().unwrap();
     let delete_set: std::collections::HashSet<&str> =
         paths_to_delete.iter().map(|s| s.as_str()).collect();
 
-    for group in groups.iter() {
-        let survivors = group
-            .files
-            .iter()
-            .filter(|f| !delete_set.contains(f.path.as_str()))
-            .count();
-        if survivors == 0 {
-            return Err(format!(
-                "Deletion aborted: group would have no survivors (group id: {})",
-                group.id
-            ));
+    if !allow_extinction {
+        for group in groups.iter() {
+            let survivors = group
+                .files
+                .iter()
+                .filter(|f| !delete_set.contains(f.path.as_str()))
+                .count();
+            if survivors == 0 {
+                return Err(format!(
+                    "Deletion aborted: group would have no survivors (group id: {})",
+                    group.id
+                ));
+            }
         }
     }
     drop(groups);

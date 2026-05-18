@@ -24,8 +24,8 @@ export const api = {
   autoMarkGroup: (groupId: string, mode: 'priority' | 'quality') =>
     invoke<string[]>('auto_mark_group', { groupId, mode }),
 
-  deleteMarked: (pathsToDelete: string[]) =>
-    invoke<string[]>('delete_marked', { pathsToDelete }),
+  deleteMarked: (pathsToDelete: string[], allowExtinction: boolean) =>
+    invoke<string[]>('delete_marked', { pathsToDelete, allowExtinction }),
 
   clearCache: () =>
     invoke<void>('clear_cache'),

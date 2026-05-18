@@ -928,7 +928,7 @@ async function confirmDelete() {
 
   try {
     const prevIndex = groups.findIndex(g => g.id === selectedGroupId);
-    await api.deleteMarked([...marked]);
+    await api.deleteMarked([...marked], anyUnsafe);
     marked.clear();
     showToast(`Deleted ${count} file${count !== 1 ? 's' : ''}`, 'success');
     groups = await api.getDuplicateGroups();
