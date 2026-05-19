@@ -1,16 +1,16 @@
 # Doope
 
-A fast desktop app for finding and removing duplicate images and videos.
+A fast, elegant desktop app for finding and removing duplicate images and videos. **Doope** walks your folders, hashes every file, and groups duplicates using exact (BLAKE3) matching for identical files and perceptual (dHash) matching for visually similar images and video frames. Results are cached so repeated scans only process new or changed files.
 
-Doope walks your folders, hashes every file, and groups duplicates — using exact (BLAKE3) matching for identical files and perceptual (dHash) matching for visually similar images and video frames. Results are cached so repeated scans only process new or changed files.
+![Doope screenshot](docs/image.png)
 
 ## Features
 
-- **Exact deduplication** — byte-identical files via BLAKE3
-- **Perceptual deduplication** — visually similar images and video frames via dHash + BK-tree
-- **Video support** — multi-frame extraction via FFmpeg
-- **Persistent cache** — SQLite cache skips unchanged files on re-scan
-- **Bulk delete** — review grouped duplicates and delete with one click
+- **Exact deduplication** - byte-identical files via BLAKE3
+- **Perceptual deduplication** - visually similar images and video frames via dHash + BK-tree
+- **Video support** - multi-frame extraction via FFmpeg
+- **Persistent cache** - SQLite cache skips unchanged files on re-scan
+- **Bulk delete** - review grouped duplicates and delete with one click
 
 ## Requirements
 
