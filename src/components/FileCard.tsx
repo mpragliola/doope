@@ -7,6 +7,7 @@ interface FileCardProps {
   dim: { w: number; h: number } | undefined;
   isBest: boolean;
   isWarn: boolean;
+  commonPrefix?: string;
   onLoad: (path: string, w: number, h: number) => void;
   onClickImage: () => void;
   onKeep: () => void;
@@ -21,6 +22,7 @@ export function FileCard({
   dim,
   isBest,
   isWarn,
+  commonPrefix,
   onLoad,
   onClickImage,
   onKeep,
@@ -89,7 +91,14 @@ export function FileCard({
             )}
           </div>
           <div className="text-[10px] text-[#666] overflow-hidden text-ellipsis whitespace-nowrap" title={f.path}>
-            {f.path}
+            {commonPrefix && f.path.startsWith(commonPrefix) ? (
+              <>
+                <span className="text-[#4ade80]">{commonPrefix}</span>
+                <span>{f.path.slice(commonPrefix.length)}</span>
+              </>
+            ) : (
+              f.path
+            )}
           </div>
           <div className="text-[10px] text-[#888] flex gap-1.5">
             <span>{sizeMb} MB</span>

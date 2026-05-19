@@ -8,6 +8,21 @@ interface ComparisonPanelProps {
   group: DuplicateGroup;
 }
 
+function commonPathPrefix(paths: string[]): string {
+  if (paths.length < 2) return '';
+  const tokens = paths.map((p) => p.split(/([\\/])/));
+  const first = tokens[0];
+  let i = 0;
+  while (i < first.length && tokens.every((t) => i < t.length && t[i] === first[i])) {
+    i++;
+  }
+  const prefix = first.slice(0, i);
+  while (prefix.length > 0 && /^[\\/]$/.test(prefix[prefix.length - 1])) {
+    prefix.pop();
+  }
+  return prefix.join('');
+}
+
 export function ComparisonPanel({ group }: ComparisonPanelProps) {
   const { marks, markFile, unmarkFile } = useResultsStore();
   const [lightboxFile, setLightboxFile] = useState<FileInfo | null>(null);
@@ -21,6 +36,7 @@ export function ComparisonPanel({ group }: ComparisonPanelProps) {
 
   const maxPx = Math.max(0, ...[...dims.values()].map(({ w, h }) => w * h));
   const imageFiles = group.files.filter((f) => f.media_type === 'image');
+  const commonPrefix = commonPathPrefix(group.files.map((f) => f.path));
 
   function tryDelete(f: FileInfo) {
     const survivors = group.files.filter((fi) => fi.path !== f.path && !marks.has(fi.path)).length;
@@ -45,6 +61,7 @@ export function ComparisonPanel({ group }: ComparisonPanelProps) {
             dim={dim}
             isBest={maxPx > 0 && px === maxPx}
             isWarn={warnPath === f.path}
+            commonPrefix={commonPrefix}
             onLoad={(path, w, h) => setDims((prev) => new Map(prev).set(path, { w, h }))}
             onClickImage={() => setLightboxFile(f)}
             onKeep={() => { unmarkFile(f.path); setWarnPath(null); }}

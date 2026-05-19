@@ -1,10 +1,5 @@
 import type { DuplicateGroup } from '../types';
 
-function shortPath(path: string): string {
-  const parts = path.split(/[\\/]/);
-  return parts.length <= 2 ? path : `…/${parts.slice(-2).join('/')}`;
-}
-
 interface GroupListItemProps {
   group: DuplicateGroup;
   marks: Set<string>;
@@ -69,10 +64,18 @@ export function GroupListItem({ group: g, marks, isSelected, isMultiSelected, on
           return (
             <span
               key={f.path}
-              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: pathColor }}
+              style={{
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                color: pathColor,
+                direction: 'rtl',
+                textAlign: 'left',
+                unicodeBidi: 'plaintext',
+              }}
               title={f.path}
             >
-              {shortPath(f.path)}
+              {f.path}
             </span>
           );
         })}
