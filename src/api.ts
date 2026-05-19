@@ -33,6 +33,9 @@ export const api = {
   checkFfmpeg: () =>
     invoke<boolean>('check_ffmpeg'),
 
+  setScanPriority: (level: number) =>
+    invoke<void>('set_scan_priority', { level }),
+
   onProgress: (cb: (evt: ProgressEvent) => void): Promise<UnlistenFn> =>
     listen<ProgressEvent>('progress', e => cb(e.payload)),
 
