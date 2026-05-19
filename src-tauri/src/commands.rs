@@ -51,12 +51,13 @@ pub async fn scan(
     state.cancel.store(false, Ordering::Relaxed);
     let cache = Arc::clone(&state.cache);
     let cancel = Arc::clone(&state.cancel);
+    let priority = Arc::clone(&state.scan_priority);
     let scanning = Arc::clone(&state.scanning);
     let app_clone = app.clone();
     let options_for_phase1 = options.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        let r = run_phase1(&options_for_phase1, cache, cancel, move |evt| {
+        let r = run_phase1(&options_for_phase1, cache, cancel, priority, move |evt| {
             let _ = app_clone.emit("progress", &evt);
         });
         scanning.store(false, Ordering::Release);

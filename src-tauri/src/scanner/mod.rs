@@ -6,7 +6,7 @@ pub mod bktree;
 
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::cache::Cache;
@@ -22,6 +22,16 @@ pub struct ScanResult {
     pub cache_misses: usize,
 }
 
+fn apply_thread_priority(level: u8) {
+    use thread_priority::{set_current_thread_priority, ThreadPriority, ThreadPriorityValue};
+    let prio = match level {
+        1 => ThreadPriority::Crossplatform(ThreadPriorityValue::try_from(35u8).unwrap()),
+        2 => ThreadPriority::Min,
+        _ => return,
+    };
+    let _ = set_current_thread_priority(prio);
+}
+
 /// Phase 1: walk folders, hash files in parallel, populate cache.
 /// Cache reads are bulk-fetched once before par_iter (zero lock contention during hashing).
 /// Writes are batched into one transaction at the end.
@@ -29,6 +39,7 @@ pub fn run_phase1(
     options: &ScanOptions,
     cache: Arc<Mutex<Cache>>,
     cancel: Arc<AtomicBool>,
+    priority: Arc<AtomicU8>,
     progress_cb: impl Fn(ProgressEvent) + Send + Sync,
 ) -> ScanResult {
     progress_cb(ProgressEvent {
@@ -78,6 +89,7 @@ pub fn run_phase1(
         .par_iter()
         .zip(path_strs.par_iter())
         .map(|(found, path_str)| {
+            apply_thread_priority(priority.load(Ordering::Relaxed));
             if cancel.load(Ordering::Relaxed) {
                 return None;
             }
@@ -217,5 +229,18 @@ pub fn run_phase1(
             .unwrap(),
         cache_hits: hits,
         cache_misses: misses,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_thread_priority;
+
+    #[test]
+    fn apply_thread_priority_does_not_panic() {
+        apply_thread_priority(0);
+        apply_thread_priority(1);
+        apply_thread_priority(2);
+        apply_thread_priority(99);
     }
 }
