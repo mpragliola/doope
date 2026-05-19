@@ -4,9 +4,6 @@ import { useToastStore } from '../stores/useToastStore';
 import { api } from '../api';
 
 export function useResultsKeys(active: boolean) {
-  const store = useResultsStore();
-  const { showToast } = useToastStore();
-
   useEffect(() => {
     if (!active) return;
 
@@ -28,7 +25,11 @@ export function useResultsKeys(active: boolean) {
         return;
       }
 
-      const { selectedGroupId, selectedGroupIds, groups, autoMarkMode } = store;
+      // Read fresh state at keydown time to avoid stale closure over group IDs.
+      const { selectedGroupId, selectedGroupIds, groups, autoMarkMode, markAllPaths, unmarkAllPaths } =
+        useResultsStore.getState();
+      const { showToast } = useToastStore.getState();
+
       if (!selectedGroupId) return;
 
       const group = groups.find((g) => g.id === selectedGroupId);
@@ -41,24 +42,24 @@ export function useResultsKeys(active: boolean) {
         try {
           for (const g of targets) {
             const toMark = await api.autoMarkGroup(g.id, autoMarkMode);
-            store.markAllPaths(toMark);
+            markAllPaths(toMark);
           }
         } catch (err) {
           showToast(String(err));
         }
       } else if (e.key === 'k' || e.key === 'K') {
         e.preventDefault();
-        targets.forEach((g) => store.unmarkAllPaths(g.files.map((f) => f.path)));
+        targets.forEach((g) => unmarkAllPaths(g.files.map((f) => f.path)));
       } else if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
-        targets.forEach((g) => store.markAllPaths(g.files.map((f) => f.path)));
+        targets.forEach((g) => markAllPaths(g.files.map((f) => f.path)));
       } else if (!isMulti) {
         const n = parseInt(e.key);
         if (!isNaN(n) && n >= 1 && n <= group.files.length) {
           e.preventDefault();
           group.files.forEach((f, i) => {
-            if (i === n - 1) store.unmarkAllPaths([f.path]);
-            else store.markAllPaths([f.path]);
+            if (i === n - 1) unmarkAllPaths([f.path]);
+            else markAllPaths([f.path]);
           });
         }
       }
