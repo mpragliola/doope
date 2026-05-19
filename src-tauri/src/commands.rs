@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
@@ -16,6 +16,7 @@ pub struct AppState {
     pub folder_priorities: Arc<Mutex<Vec<String>>>,
     pub cancel: Arc<AtomicBool>,
     pub scanning: Arc<AtomicBool>,
+    pub scan_priority: Arc<AtomicU8>,
 }
 
 impl AppState {
@@ -31,6 +32,7 @@ impl AppState {
             folder_priorities: Arc::new(Mutex::new(vec![])),
             cancel: Arc::new(AtomicBool::new(false)),
             scanning: Arc::new(AtomicBool::new(false)),
+            scan_priority: Arc::new(AtomicU8::new(1)), // 1 = Balanced
         }
     }
 }
@@ -299,6 +301,15 @@ pub async fn check_ffmpeg() -> bool {
     crate::scanner::video::ffmpeg_available()
 }
 
+#[tauri::command]
+pub async fn set_scan_priority(level: u8, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    if level > 2 {
+        return Err(format!("invalid priority level: {}", level));
+    }
+    state.scan_priority.store(level, Ordering::Relaxed);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,5 +405,25 @@ mod tests {
         let priorities: Vec<String> = vec![];
         let keeper = quality_keeper(&group, &priorities);
         assert_eq!(keeper, large_path.to_str().unwrap());
+    }
+
+    #[test]
+    fn scan_priority_defaults_to_balanced() {
+        let state = AppState::new();
+        assert_eq!(state.scan_priority.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn set_scan_priority_rejects_invalid_level() {
+        fn validate(level: u8) -> Result<(), String> {
+            if level > 2 {
+                return Err(format!("invalid priority level: {}", level));
+            }
+            Ok(())
+        }
+        assert!(validate(0).is_ok());
+        assert!(validate(1).is_ok());
+        assert!(validate(2).is_ok());
+        assert!(validate(3).is_err());
     }
 }

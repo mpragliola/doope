@@ -20,6 +20,7 @@ pub fn run() {
             commands::delete_marked,
             commands::clear_cache,
             commands::check_ffmpeg,
+            commands::set_scan_priority,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
