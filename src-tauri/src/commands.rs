@@ -266,13 +266,16 @@ pub async fn delete_marked(
     }
 
     {
-        let mut groups = state.groups.lock().unwrap();
         let deleted_set: std::collections::HashSet<&str> =
             deleted.iter().map(|s| s.as_str()).collect();
+        let mut groups = state.groups.lock().unwrap();
         for group in groups.iter_mut() {
             group.files.retain(|f| !deleted_set.contains(f.path.as_str()));
         }
         groups.retain(|g| g.files.len() >= 2);
+        drop(groups);
+        let mut records = state.records.lock().unwrap();
+        records.retain(|r| !deleted_set.contains(r.path.as_str()));
     }
 
     if !errors.is_empty() {
