@@ -6,13 +6,18 @@ use crate::models::{DuplicateGroup, DuplicateType, FileInfo, FileRecord, ScanMod
 use crate::scanner::bktree::BkTree;
 use crate::scanner::hasher::{hamming_distance, hamming_distance_multi};
 
+/// Entry point. Groups `records` into duplicate sets according to `mode`.
+///
+/// `threshold` is the maximum Hamming distance for perceptual matches (ignored for
+/// filename/exact modes). `progress` receives phase labels ("filename", "exact",
+/// "perceptual") so the caller can update the UI between long-running phases.
 pub fn find_duplicates(
     records: &[FileRecord],
     mode: &ScanMode,
     threshold: u32,
     progress: impl Fn(&str),
 ) -> Vec<DuplicateGroup> {
-    // Defensive dedup — callers should not produce duplicate paths, but guard here anyway.
+    // Callers should not produce duplicate paths, but deduplicate defensively.
     let mut seen = std::collections::HashSet::new();
     let records: Vec<&FileRecord> = records.iter().filter(|r| seen.insert(&r.path)).collect();
     let records: Vec<FileRecord> = records.into_iter().cloned().collect();
@@ -32,6 +37,9 @@ pub fn find_duplicates(
             groups.extend(group_by_phash(records, threshold));
         }
         ScanMode::Both => {
+            // Filename grouping runs first; files already claimed by a filename group
+            // are excluded from the subsequent exact/perceptual passes to avoid
+            // surfacing the same pair in two different groups.
             progress("filename");
             let filename_groups = group_by_filename(records);
             let filename_grouped_paths: std::collections::HashSet<String> = filename_groups
@@ -56,6 +64,8 @@ pub fn find_duplicates(
     groups
 }
 
+/// Returns the maximum pairwise Hamming distance within a cluster.
+/// Reported to the frontend so the user can gauge how visually similar the group is.
 fn compute_max_distance(cluster: &[&FileRecord]) -> u32 {
     let n = cluster.len();
     (0..n)
@@ -75,7 +85,12 @@ fn compute_max_distance(cluster: &[&FileRecord]) -> u32 {
         .unwrap_or(0)
 }
 
-/// BK-tree accelerated grouping for single-frame phashes (images and FirstFrame videos).
+/// BK-tree grouping for single-frame phashes (images and FirstFrame videos).
+///
+/// Phase 1 (parallel): build the tree, then query every hash in parallel — safe because
+/// `find_within` is read-only and BkTree holds no interior mutability.
+/// Phase 2 (sequential): greedy cluster assignment — must be serial because marking a node
+/// `assigned` affects which neighbors are still available to later seeds.
 fn group_single_frame(records: &[&FileRecord], threshold: u32) -> Vec<DuplicateGroup> {
     let parsed: Vec<(u64, &FileRecord)> = records
         .iter()
@@ -126,7 +141,11 @@ fn group_single_frame(records: &[&FileRecord], threshold: u32) -> Vec<DuplicateG
     groups
 }
 
-/// O(n²) grouping for multi-frame phashes (MultiFrame video strategy only — small set).
+/// O(n²) grouping for multi-frame phashes (MultiFrame video strategy only).
+///
+/// Multi-frame hashes are semicolon-joined strings of per-frame u64s, so they can't be
+/// inserted into the BK-tree which expects a single u64. The set of videos using this
+/// strategy is expected to be small relative to images, so O(n²) is acceptable here.
 fn group_multi_frame(records: &[&FileRecord], threshold: u32) -> Vec<DuplicateGroup> {
     let n = records.len();
     let mut assigned = vec![false; n];
@@ -155,6 +174,8 @@ fn group_multi_frame(records: &[&FileRecord], threshold: u32) -> Vec<DuplicateGr
     groups
 }
 
+/// Groups files by (lowercased filename, size). Both must match to avoid false positives
+/// from common names like "thumbnail.jpg" that appear across unrelated directories.
 fn group_by_filename(records: &[FileRecord]) -> Vec<DuplicateGroup> {
     let mut map: HashMap<(String, u64), Vec<&FileRecord>> = HashMap::new();
     for r in records {
@@ -206,6 +227,8 @@ fn group_by_phash(records: &[FileRecord], threshold: u32) -> Vec<DuplicateGroup>
     groups
 }
 
+/// Converts a raw cluster into the frontend-facing `DuplicateGroup`.
+/// `wasted_bytes` = total size of all copies minus the largest one (the one you'd keep).
 fn make_group(members: Vec<&FileRecord>, dup_type: DuplicateType, max_distance: Option<u32>) -> DuplicateGroup {
     let max_size = members.iter().map(|r| r.size).max().unwrap_or(0);
     let wasted_bytes = members.iter().map(|r| r.size).sum::<u64>().saturating_sub(max_size);
